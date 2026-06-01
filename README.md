@@ -67,7 +67,7 @@ Streaming response
 
 - [Docker](https://docs.docker.com/get-docker/) and Docker Compose
 - [Ollama](https://ollama.com/) (for local embeddings and models)
-- Go 1.22+ (for local backend development)
+- Go 1.26+ (for local backend development)
 - Node.js 20+ (for local frontend development)
 
 ---
