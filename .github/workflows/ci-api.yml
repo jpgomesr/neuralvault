@@ -1,0 +1,46 @@
+name: CI — API
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "api/**"
+      - ".github/workflows/ci-api.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "api/**"
+      - ".github/workflows/ci-api.yml"
+
+jobs:
+  api:
+    name: API (Go)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          cache: true
+
+      - name: Install dependencies
+        working-directory: api
+        run: go mod download
+
+      - name: Lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          working-directory: api
+          version: latest
+
+      - name: Test
+        working-directory: api
+        run: go test ./... -race -coverprofile=coverage.out
+
+      - name: Build
+        working-directory: api
+        run: go build ./cmd/server
