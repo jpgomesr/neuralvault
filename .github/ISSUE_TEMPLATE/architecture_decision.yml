@@ -1,0 +1,62 @@
+name: Architecture decision
+description: Propose or discuss a significant technical decision before implementation
+title: "adr: "
+labels: [adr]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template to propose a significant technical decision before writing code.
+        If accepted, this will become a formal ADR in `docs/adr/`.
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: Why is this decision needed? What problem or constraint are you working within?
+    validations:
+      required: true
+
+  - type: textarea
+    id: options
+    attributes:
+      label: Options considered
+      description: List the options you evaluated with pros and cons for each.
+      placeholder: |
+        **Option A — ...**
+        Pros:
+        -
+        Cons:
+        -
+
+        **Option B — ...**
+        Pros:
+        -
+        Cons:
+        -
+    validations:
+      required: true
+
+  - type: textarea
+    id: decision
+    attributes:
+      label: Proposed decision
+      description: Which option do you recommend and why?
+    validations:
+      required: true
+
+  - type: textarea
+    id: consequences
+    attributes:
+      label: Consequences
+      description: What becomes easier or harder if this decision is accepted?
+    validations:
+      required: true
+
+  - type: textarea
+    id: references
+    attributes:
+      label: References
+      description: Benchmarks, prior art, documentation, or related ADRs.
+    validations:
+      required: false
