@@ -32,7 +32,7 @@ jobs:
         run: go mod download
 
       - name: Lint
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v9
         with:
           working-directory: api
           version: latest
