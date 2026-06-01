@@ -43,7 +43,7 @@ Make sure you have the following installed before starting:
 
 | Tool | Version | Purpose |
 | --- | --- | --- |
-| Go | 1.22+ | Backend development |
+| Go | 1.26+ | Backend development |
 | Node.js | 20+ | Frontend development |
 | Docker + Docker Compose | latest | Running services locally |
 | Ollama | latest | Local embeddings and models |
