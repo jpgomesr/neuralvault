@@ -1,0 +1,18 @@
+# CODEOWNERS
+# These owners are automatically requested for review on PRs that touch these paths.
+# Replace @jpgomesr with your actual GitHub username.
+
+# Global fallback — everything not matched below
+* @jpgomesr
+
+# Backend
+/api/ @jpgomesr
+
+# Frontend
+/web/ @jpgomesr
+
+# Documentation and ADRs
+/docs/ @jpgomesr
+
+# CI and repo configuration
+/.github/ @jpgomesr
