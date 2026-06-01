@@ -1,0 +1,62 @@
+# NeuralVault GitHub Labels
+# Apply these with: npx github-label-sync --access-token <token> --labels .github/labels.yml your-org/neuralvault
+
+- name: bug
+  color: "E24B4A"
+  description: Something is broken or not working as expected
+
+- name: enhancement
+  color: "7F77DD"
+  description: New feature or improvement request
+
+- name: adr
+  color: "1D9E75"
+  description: Architecture decision record — significant technical decision
+
+- name: documentation
+  color: "EF9F27"
+  description: Improvements or additions to documentation
+
+- name: good first issue
+  color: "9FE1CB"
+  description: Good for newcomers to the project
+
+- name: help wanted
+  color: "5DCAA5"
+  description: Extra attention or contributions needed
+
+- name: roadmap
+  color: "AFA9EC"
+  description: Tied to a planned roadmap item
+
+- name: dependencies
+  color: "B4B2A9"
+  description: Dependency update (Dependabot or manual)
+
+- name: go
+  color: "85B7EB"
+  description: Relates to the Go backend
+
+- name: javascript
+  color: "FAC775"
+  description: Relates to the Next.js frontend
+
+- name: docker
+  color: "F5C4B3"
+  description: Relates to Docker or Docker Compose
+
+- name: github-actions
+  color: "D3D1C7"
+  description: Relates to CI/CD workflows
+
+- name: wontfix
+  color: "B4B2A9"
+  description: This will not be worked on
+
+- name: duplicate
+  color: "D3D1C7"
+  description: This issue or PR already exists
+
+- name: invalid
+  color: "F09595"
+  description: This does not seem right or is out of scope
