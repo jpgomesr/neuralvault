@@ -61,6 +61,8 @@ Streaming response
 | Streaming  | HTTP Streaming / SSE |
 | Analytics  | PostHog              |
 
+For the full folder structure see [CONTRIBUTING.md](CONTRIBUTING.md#project-structure).
+
 ---
 
 ## Prerequisites
