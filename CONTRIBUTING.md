@@ -118,7 +118,7 @@ The UI will be available at `http://localhost:3000`.
 ## Project structure
 
 ```
-neuralvault/
+NeuralVault/
 ├── api/                  # Go backend
 │   ├── cmd/server/       # Entry point
 │   ├── internal/
@@ -126,7 +126,10 @@ neuralvault/
 │   │   ├── embedding/    # Embedding generation
 │   │   ├── retrieval/    # Vector search and reranking
 │   │   ├── ingestion/    # Source ingestion pipeline
-│   │   └── llm/          # LLM provider abstraction
+│   │   ├── llm/          # LLM provider abstraction
+│   │   ├── logger/       # Global logger configuration
+│   │   ├── router/       # Chi router global configuration and routes handler
+│   │   └── health/       # System health status
 │   └── migrations/       # PostgreSQL migrations
 ├── web/                  # Next.js frontend
 ├── docs/                 # Documentation
