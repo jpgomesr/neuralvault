@@ -34,6 +34,63 @@ func setValidEnv(t *testing.T) {
 	t.Setenv("POSTGRES_PASSWORD", "pass")
 	t.Setenv("POSTGRES_NAME", "db")
 	t.Setenv("POSTGRES_SSL_MODE", "disable")
+
+	t.Setenv("QDGRANT_PORT", "6333")
+	t.Setenv("QDGRANT_GRPC_PORT", "6334")
+	t.Setenv("QDGRANT_URL", "http://localhost:6333")
+
+	t.Setenv("OLLAMA_PORT", "11434")
+	t.Setenv("OLLAMA_URL", "http://localhost:11434")
+	t.Setenv("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text")
+}
+
+// Ensures the validator is initialized once.
+func TestGetValidator_Singleton(t *testing.T) {
+	resetGlobals()
+
+	first := getValidator()
+	second := getValidator()
+
+	if first == nil || second == nil {
+		t.Fatal("expected validator instance")
+	}
+	if first != second {
+		t.Fatal("expected singleton validator instance")
+	}
+}
+
+// Ensures loadEnvFile loads env vars from a file.
+func TestLoadEnvFile_LoadsEnvFile(t *testing.T) {
+	resetGlobals()
+
+	configDir := t.TempDir()
+	filePath := filepath.Join(configDir, ".env.test")
+
+	if err := os.WriteFile(filePath, []byte("CONFIG_TEST_VAR=loaded\n"), 0644); err != nil {
+		t.Fatalf("failed to write env file: %v", err)
+	}
+
+	os.Unsetenv("CONFIG_TEST_VAR")
+	loadEnvFile(filePath)
+
+	if got := os.Getenv("CONFIG_TEST_VAR"); got != "loaded" {
+		t.Fatalf("expected CONFIG_TEST_VAR=loaded, got: %q", got)
+	}
+}
+
+// Ensures missing env files do not mutate environment variables.
+func TestLoadEnvFile_MissingFile(t *testing.T) {
+	resetGlobals()
+
+	configDir := t.TempDir()
+	filePath := filepath.Join(configDir, ".env.missing")
+
+	os.Unsetenv("CONFIG_TEST_VAR")
+	loadEnvFile(filePath)
+
+	if got := os.Getenv("CONFIG_TEST_VAR"); got != "" {
+		t.Fatalf("expected CONFIG_TEST_VAR to be unset, got: %q", got)
+	}
 }
 
 // Verifies that configuration is loaded only once and
@@ -143,6 +200,86 @@ func TestLoadConfig_InvalidPort(t *testing.T) {
 	}
 }
 
+// Ensures Postgres port validation rejects values outside the
+// valid TCP/UDP port range.
+func TestLoadConfig_InvalidPostgresPort(t *testing.T) {
+	resetGlobals()
+
+	configDir := t.TempDir()
+	t.Setenv("CONFIG_DIR", configDir)
+
+	setValidEnv(t)
+	t.Setenv("POSTGRES_PORT", "70000")
+
+	_, err := loadConfig()
+	if err == nil {
+		t.Fatalf("expected validation error, got nil")
+	}
+	if !strings.Contains(err.Error(), "Postgres.Port") {
+		t.Fatalf("expected Postgres.Port validation error, got: %v", err)
+	}
+}
+
+// Ensures Qdrant port validation rejects values outside the
+// valid TCP/UDP port range.
+func TestLoadConfig_InvalidQdrantPort(t *testing.T) {
+	resetGlobals()
+
+	configDir := t.TempDir()
+	t.Setenv("CONFIG_DIR", configDir)
+
+	setValidEnv(t)
+	t.Setenv("QDGRANT_PORT", "70000")
+
+	_, err := loadConfig()
+	if err == nil {
+		t.Fatalf("expected validation error, got nil")
+	}
+	if !strings.Contains(err.Error(), "Qdrant.Port") {
+		t.Fatalf("expected Qdrant.Port validation error, got: %v", err)
+	}
+}
+
+// Ensures Qdrant gRPC port validation rejects values outside the
+// valid TCP/UDP port range.
+func TestLoadConfig_InvalidQdrantGrpcPort(t *testing.T) {
+	resetGlobals()
+
+	configDir := t.TempDir()
+	t.Setenv("CONFIG_DIR", configDir)
+
+	setValidEnv(t)
+	t.Setenv("QDGRANT_GRPC_PORT", "70000")
+
+	_, err := loadConfig()
+	if err == nil {
+		t.Fatalf("expected validation error, got nil")
+	}
+	if !strings.Contains(err.Error(), "Qdrant.GrpcPort") {
+		t.Fatalf("expected Qdrant.GrpcPort validation error, got: %v", err)
+	}
+}
+
+// Ensures Ollama port validation rejects values outside the
+// valid TCP/UDP port range.
+func TestLoadConfig_InvalidOllamaPort(t *testing.T) {
+	resetGlobals()
+
+	configDir := t.TempDir()
+	t.Setenv("CONFIG_DIR", configDir)
+
+	setValidEnv(t)
+	t.Setenv("OLLAMA_PORT", "70000")
+
+	_, err := loadConfig()
+	if err == nil {
+		t.Fatalf("expected validation error, got nil")
+	}
+	if !strings.Contains(err.Error(), "Ollama.Port") {
+		t.Fatalf("expected Ollama.Port validation error, got: %v", err)
+	}
+}
+
 // Ensures SSL mode validation only accepts supported
 // PostgreSQL SSL modes.
 func TestLoadConfig_InvalidSSLMode(t *testing.T) {
@@ -187,10 +324,59 @@ func TestLoadConfig_SuccessfulLoad(t *testing.T) {
 	if cfg.Postgres.Host != "localhost" {
 		t.Fatalf("expected postgres host localhost, got: %s", cfg.Postgres.Host)
 	}
+	if cfg.Qdrant.Port != 6333 {
+		t.Fatalf("expected qdrant port 6333, got: %d", cfg.Qdrant.Port)
+	}
+	if cfg.Ollama.EmbeddingModel != "nomic-embed-text" {
+		t.Fatalf("expected embedding model nomic-embed-text, got: %s", cfg.Ollama.EmbeddingModel)
+	}
 
 	dsn := cfg.Postgres.DSN()
 	if !strings.Contains(dsn, "host=localhost") || !strings.Contains(dsn, "dbname=db") {
 		t.Fatalf("expected DSN to include host and dbname, got: %s", dsn)
+	}
+}
+
+// Ensures each required string field is validated when missing.
+func TestLoadConfig_MissingRequiredStringFields(t *testing.T) {
+	required := []struct {
+		name      string
+		envVar    string
+		fieldName string
+	}{
+		{name: "server env", envVar: "SERVER_ENV", fieldName: "Server.Env"},
+		{name: "postgres host", envVar: "POSTGRES_HOST", fieldName: "Postgres.Host"},
+		{name: "postgres username", envVar: "POSTGRES_USERNAME", fieldName: "Postgres.Username"},
+		{name: "postgres password", envVar: "POSTGRES_PASSWORD", fieldName: "Postgres.Password"},
+		{name: "postgres name", envVar: "POSTGRES_NAME", fieldName: "Postgres.Name"},
+		{name: "qdrant url", envVar: "QDGRANT_URL", fieldName: "Qdrant.URL"},
+		{name: "ollama url", envVar: "OLLAMA_URL", fieldName: "Ollama.URL"},
+		{name: "ollama embedding model", envVar: "OLLAMA_EMBEDDING_MODEL", fieldName: "Ollama.EmbeddingModel"},
+	}
+
+	for _, tc := range required {
+		t.Run(tc.name, func(t *testing.T) {
+			resetGlobals()
+
+			configDir := t.TempDir()
+			t.Setenv("CONFIG_DIR", configDir)
+
+			setValidEnv(t)
+			if err := os.Unsetenv(tc.envVar); err != nil {
+				t.Fatalf("failed to unset %s: %v", tc.envVar, err)
+			}
+
+			_, err := loadConfig()
+			if err == nil {
+				t.Fatalf("expected validation error, got nil")
+			}
+			if !strings.Contains(err.Error(), "validation errors") {
+				t.Fatalf("expected validation errors, got: %v", err)
+			}
+			if !strings.Contains(err.Error(), tc.fieldName) {
+				t.Fatalf("expected validation error for %s, got: %v", tc.fieldName, err)
+			}
+		})
 	}
 }
 
@@ -211,6 +397,12 @@ func TestLoadConfig_DotEnvLoading(t *testing.T) {
 		"POSTGRES_PASSWORD",
 		"POSTGRES_NAME",
 		"POSTGRES_SSL_MODE",
+		"QDGRANT_PORT",
+		"QDGRANT_GRPC_PORT",
+		"QDGRANT_URL",
+		"OLLAMA_PORT",
+		"OLLAMA_URL",
+		"OLLAMA_EMBEDDING_MODEL",
 	} {
 		if err := os.Unsetenv(key); err != nil {
 			t.Fatalf("failed to unset %s: %v", key, err)
@@ -225,6 +417,12 @@ func TestLoadConfig_DotEnvLoading(t *testing.T) {
 		"POSTGRES_USERNAME=baseuser",
 		"POSTGRES_NAME=basedb",
 		"POSTGRES_SSL_MODE=disable",
+		"QDGRANT_PORT=6333",
+		"QDGRANT_GRPC_PORT=6334",
+		"QDGRANT_URL=http://localhost:6333",
+		"OLLAMA_PORT=11434",
+		"OLLAMA_URL=http://localhost:11434",
+		"OLLAMA_EMBEDDING_MODEL=nomic-embed-text",
 	}, "\n") + "\n"
 
 	envDev := "POSTGRES_PASSWORD=devpass\n"

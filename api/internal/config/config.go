@@ -18,6 +18,8 @@ import (
 type Config struct {
 	Server   Server   `envconfig:"SERVER"`
 	Postgres Postgres `envconfig:"POSTGRES"`
+	Qdrant   Qdrant   `envconfig:"QDGRANT"`
+	Ollama   Ollama   `envconfig:"OLLAMA"`
 }
 
 // Server contains HTTP server configuration.
@@ -34,6 +36,20 @@ type Postgres struct {
 	Password string `envconfig:"PASSWORD" validate:"required"`
 	Name     string `envconfig:"NAME" validate:"required"`
 	SSLMode  string `envconfig:"SSL_MODE" default:"disable" validate:"oneof=disable allow prefer require verify-ca verify-full"`
+}
+
+// Qdrant contains vector database connection settings.
+type Qdrant struct {
+	Port     int    `envconfig:"PORT" validate:"required,gte=1,lte=65535"`
+	GrpcPort int    `envconfig:"GRPC_PORT" validate:"required,gte=1,lte=65535"`
+	URL      string `envconfig:"URL" validate:"required"`
+}
+
+// Ollama contains local-LLM configuration.
+type Ollama struct {
+	Port           int    `envconfig:"PORT" validate:"required,gte=1,lte=65535"`
+	URL            string `envconfig:"URL" validate:"required"`
+	EmbeddingModel string `envconfig:"EMBEDDING_MODEL" validate:"required"`
 }
 
 var (
