@@ -70,7 +70,9 @@ func TestLoadEnvFile_LoadsEnvFile(t *testing.T) {
 		t.Fatalf("failed to write env file: %v", err)
 	}
 
-	os.Unsetenv("CONFIG_TEST_VAR")
+	if err := os.Unsetenv("CONFIG_TEST_VAR"); err != nil {
+		t.Fatalf("failed to unset CONFIG_TEST_VAR: %v", err)
+	}
 	loadEnvFile(filePath)
 
 	if got := os.Getenv("CONFIG_TEST_VAR"); got != "loaded" {
@@ -85,7 +87,9 @@ func TestLoadEnvFile_MissingFile(t *testing.T) {
 	configDir := t.TempDir()
 	filePath := filepath.Join(configDir, ".env.missing")
 
-	os.Unsetenv("CONFIG_TEST_VAR")
+	if err := os.Unsetenv("CONFIG_TEST_VAR"); err != nil {
+		t.Fatalf("failed to unset CONFIG_TEST_VAR: %v", err)
+	}
 	loadEnvFile(filePath)
 
 	if got := os.Getenv("CONFIG_TEST_VAR"); got != "" {
