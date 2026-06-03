@@ -25,6 +25,13 @@ func NewHandler(service Service) *Handler {
 	}
 }
 
+// GetHealth godoc
+//
+// @Summary Get all health status
+// @Description Returns all health status of all connections
+// @Tags health
+// @Success 200
+// @Router /health [get]
 func (h *Handler) GetHealth(w http.ResponseWriter, r *http.Request) {
 	connection, err := h.service.AllHealth()
 	if err != nil {
