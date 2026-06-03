@@ -1,0 +1,17 @@
+basePath: /
+info:
+  contact: {}
+  description: API for NeuralVault
+  title: NeuralVault API
+  version: 0.0.1
+paths:
+  /health:
+    get:
+      description: Returns all health status of all connections
+      responses:
+        "200":
+          description: OK
+      summary: Get all health status
+      tags:
+      - health
+swagger: "2.0"
