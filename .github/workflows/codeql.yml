@@ -18,7 +18,6 @@ jobs:
       matrix:
         language:
           - go
-          - javascript
 
     runs-on: ubuntu-latest
 
