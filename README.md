@@ -1,5 +1,7 @@
 # NeuralVault
 
+[![codecov](https://codecov.io/gh/jpgomesr/neuralvault/branch/main/graph/badge.svg)](https://codecov.io/gh/jpgomesr/neuralvault)
+
 > Give AI long-term memory using your notes, repositories, and documentation.
 
 NeuralVault is an open-source AI memory and contextual retrieval platform. Instead of a chatbot that forgets everything the moment the session ends, NeuralVault indexes your knowledge sources — Obsidian vaults, Git repositories, PDFs, docs — and retrieves the most relevant context for every question you ask.
