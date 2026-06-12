@@ -7,7 +7,7 @@ body:
     attributes:
       value: |
         Use this template to propose a new feature or capability.
-        Before submitting, check the [roadmap](https://github.com/jpgomesr/NeuralVault/blob/main/docs/roadmap.md) — it may already be planned.
+        Before submitting, check the [roadmap](https://github.com/jpgomesr/neuralvault/blob/main/docs/roadmap.md) — it may already be planned.
 
   - type: dropdown
     id: area

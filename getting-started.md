@@ -21,8 +21,8 @@ Go and Node.js are only required if you want to run the backend or frontend outs
 ## Step 1 — Clone the repository
 
 ```bash
-git clone https://github.com/jpgomesr/NeuralVault.git
-cd NeuralVault
+git clone https://github.com/jpgomesr/neuralvault.git
+cd neuralvault
 ```
 
 ---
