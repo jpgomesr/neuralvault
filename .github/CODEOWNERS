@@ -1,6 +1,5 @@
 # CODEOWNERS
 # These owners are automatically requested for review on PRs that touch these paths.
-# Replace @jpgomesr with your actual GitHub username.
 
 # Global fallback — everything not matched below
 * @jpgomesr

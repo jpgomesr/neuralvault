@@ -78,8 +78,8 @@ For the full folder structure see [CONTRIBUTING.md](CONTRIBUTING.md#project-stru
 
 ```bash
 # Clone the repository
-git clone https://github.com/jpgomesr/NeuralVault.git
-cd NeuralVault
+git clone https://github.com/jpgomesr/neuralvault.git
+cd neuralvault
 
 # Pull the embedding model
 ollama pull nomic-embed-text

@@ -27,7 +27,7 @@ Be respectful and constructive. We are here to build something useful together. 
 
 ## Ways to contribute
 
-- Fix a bug — check the [open issues](https://github.com/jpgomesr/NeuralVault/issues) labelled `bug`
+- Fix a bug — check the [open issues](https://github.com/jpgomesr/neuralvault/issues) labelled `bug`
 - Implement a roadmap item — check issues labelled `roadmap`
 - Improve documentation — typos, clarity, missing steps
 - Write tests — coverage is always welcome
@@ -56,7 +56,7 @@ Make sure you have the following installed before starting:
 ### 1. Fork and clone
 
 ```bash
-git clone https://github.com/jpgomesr/NeuralVault.git
+git clone https://github.com/jpgomesr/neuralvault.git
 cd neuralvault
 ```
 
