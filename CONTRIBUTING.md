@@ -119,22 +119,70 @@ The UI will be available at `http://localhost:3000`.
 
 ```
 NeuralVault/
-├── api/                  # Go backend
-│   ├── cmd/server/       # Entry point
+├── api/                        # Go backend
+│   ├── cmd/server/             # Entry point (main.go)
 │   ├── internal/
-│   │   ├── chunking/     # Chunking engine
-│   │   ├── embedding/    # Embedding generation
-│   │   ├── retrieval/    # Vector search and reranking
-│   │   ├── ingestion/    # Source ingestion pipeline
-│   │   ├── llm/          # LLM provider abstraction
-│   │   ├── logger/       # Global logger configuration
-│   │   ├── router/       # Chi router global configuration and routes handler
-│   │   └── health/       # System health status
-│   └── migrations/       # PostgreSQL migrations
-├── web/                  # Next.js frontend
-├── docs/                 # Documentation
-│   └── adr/              # Architecture decision records
+│   │   ├── config/             # Config loading and validation
+│   │   ├── embedding/          # Embedder interface and domain types
+│   │   │   ├── embedding.go    # Embedder interface, Chunk, Embedding types
+│   │   │   ├── ollama/         # Ollama implementation (planned)
+│   │   │   └── openai/         # OpenAI implementation (planned)
+│   │   ├── llm/                # LLM provider interface and domain types
+│   │   │   ├── llm.go          # Provider interface, Message, CompletionRequest types
+│   │   │   ├── openai/         # OpenAI implementation (planned)
+│   │   │   ├── claude/         # Claude implementation (planned)
+│   │   │   ├── gemini/         # Gemini implementation (planned)
+│   │   │   └── ollama/         # Ollama implementation (planned)
+│   │   ├── health/             # System health status
+│   │   │   ├── handler.go      # HTTP handler
+│   │   │   ├── service.go      # Business logic interface and implementation
+│   │   │   └── routes.go       # Chi subrouter
+│   │   ├── logger/             # Global logger initialisation
+│   │   └── router/             # Chi router wiring and top-level route mounting
+│   └── migrations/             # PostgreSQL migrations
+├── web/                        # Next.js frontend
+├── docs/                       # Documentation
+│   └── adr/                    # Architecture decision records
 └── docker-compose.yml
+```
+
+---
+
+## Package conventions
+
+### Interface packages (`embedding/`, `llm/`, and future pluggable domains)
+
+Packages with swappable backends follow a two-level layout:
+
+```
+internal/<domain>/
+    <domain>.go          # interface + domain types only — no business logic, no imports of concrete packages
+    <provider>/          # one sub-package per concrete implementation
+        <provider>.go    # implements the interface defined in the parent package
+```
+
+The root file (`embedding.go`, `llm.go`) defines only the Go interface and the value types that cross package boundaries. Nothing in the rest of the codebase imports a concrete provider — callers depend solely on the interface. This keeps providers interchangeable and independently testable.
+
+When adding a new provider:
+
+1. Create `internal/<domain>/<provider>/<provider>.go`.
+2. Implement every method of the interface defined in the parent package.
+3. Wire the concrete type in `cmd/server/main.go` — nowhere else.
+
+### Feature domains (`health/`, and future endpoint domains)
+
+Each feature domain exposes exactly three files:
+
+| File | Responsibility |
+| --- | --- |
+| `handler.go` | HTTP layer — decode request, call service, encode response |
+| `service.go` | Business logic — interface definition and its implementation |
+| `routes.go` | Chi subrouter — maps HTTP verbs and paths to handler methods |
+
+Mount the subrouter in `router/router.go`:
+
+```go
+r.Mount("/health", health.Routes(handler))
 ```
 
 ---
