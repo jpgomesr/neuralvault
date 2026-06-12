@@ -6,6 +6,9 @@ on:
 jobs:
   coverage:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: api
 
     steps:
       - uses: actions/checkout@v5
@@ -14,6 +17,11 @@ jobs:
         with:
           go-version-file: api/go.mod
 
-      - run: go test ./... -coverprofile=coverage.out
+      - run: go test ./... -race -coverprofile=coverage.out
 
-      - run: go tool cover -func=coverage.out
+      - name: Publish coverage summary
+        run: |
+          echo '## Coverage Report' >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          go tool cover -func=coverage.out >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
