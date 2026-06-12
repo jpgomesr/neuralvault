@@ -1,0 +1,19 @@
+name: Coverage
+
+on:
+  pull_request:
+
+jobs:
+  coverage:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - run: go test ./... -coverprofile=coverage.out
+
+      - run: go tool cover -func=coverage.out
