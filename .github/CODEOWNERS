@@ -15,3 +15,7 @@
 
 # CI and repo configuration
 /.github/ @jpgomesr
+
+# Claude configuration
+/.claude/ @jpgomesr
+/CLAUDE.md @jpgomesr
