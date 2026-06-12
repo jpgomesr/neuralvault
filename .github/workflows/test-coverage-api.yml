@@ -2,6 +2,12 @@ name: Coverage
 
 on:
   pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  pull-requests: write
 
 jobs:
   coverage:
@@ -17,11 +23,27 @@ jobs:
         with:
           go-version-file: api/go.mod
 
-      - run: go test ./... -race -coverprofile=coverage.out
+      - name: Run tests with coverage
+        run: go test ./... -race -coverprofile=coverage.out
 
-      - name: Publish coverage summary
+      - name: Publish step summary
         run: |
-          echo '## Coverage Report' >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          go tool cover -func=coverage.out >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
+          TOTAL=$(go tool cover -func=coverage.out | grep ^total | awk '{print $3}')
+          {
+            echo "## Coverage Report"
+            echo ""
+            echo "**Total: ${TOTAL}**"
+            echo ""
+            echo "<details><summary>Full breakdown</summary>"
+            echo ""
+            printf '```\n'
+            go tool cover -func=coverage.out
+            printf '```\n'
+            echo "</details>"
+          } >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          files: api/coverage.out
+          token: ${{ secrets.CODECOV_TOKEN }}
