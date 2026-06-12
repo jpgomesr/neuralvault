@@ -1,5 +1,13 @@
 # NeuralVault GitHub Labels
-# Apply these with: npx github-label-sync --access-token <token> --labels .github/labels.yml your-org/neuralvault
+
+# Apply with:
+# npx github-label-sync --access-token <token> --labels .github/labels.yml jpgomesr/neuralvault
+
+# ============================================================
+
+# Issue Types
+
+# ============================================================
 
 - name: bug
   color: "E24B4A"
@@ -9,13 +17,93 @@
   color: "7F77DD"
   description: New feature or improvement request
 
-- name: adr
-  color: "1D9E75"
-  description: Architecture decision record — significant technical decision
+- name: chore
+  color: "B4B2A9"
+  description: Maintenance, cleanup, or non-functional changes
+
+- name: refactor
+  color: "D4C5F9"
+  description: Improve code structure without changing behavior
 
 - name: documentation
   color: "EF9F27"
   description: Improvements or additions to documentation
+
+- name: question
+  color: "0E8A16"
+  description: Further information or discussion is needed
+
+# ============================================================
+
+# Architecture & Planning
+
+# ============================================================
+
+- name: adr
+  color: "1D9E75"
+  description: Architecture decision record — significant technical decision
+
+- name: roadmap
+  color: "AFA9EC"
+  description: Tied to a planned roadmap item
+
+# ============================================================
+
+# Technical Areas
+
+# ============================================================
+
+- name: api
+  color: "1D9E75"
+  description: REST API, handlers, routes, and contracts
+
+- name: go
+  color: "85B7EB"
+  description: Relates to the Go backend
+
+- name: frontend
+  color: "FAC775"
+  description: Relates to the frontend application
+
+- name: storage
+  color: "7FDBDA"
+  description: Object storage, file management, and storage providers
+
+- name: vector-store
+  color: "C5A3FF"
+  description: Vector database and embedding related work
+
+- name: docker
+  color: "F5C4B3"
+  description: Relates to Docker or containerization
+
+- name: github-actions
+  color: "D3D1C7"
+  description: Relates to CI/CD workflows
+
+- name: dependencies
+  color: "B4B2A9"
+  description: Dependency update (Dependabot or manual)
+
+# ============================================================
+
+# Quality Attributes
+
+# ============================================================
+
+- name: security
+  color: "B60205"
+  description: Security-related issue or improvement
+
+- name: performance
+  color: "FBCA04"
+  description: Performance improvement or optimization
+
+# ============================================================
+
+# Community
+
+# ============================================================
 
 - name: good first issue
   color: "9FE1CB"
@@ -25,33 +113,11 @@
   color: "5DCAA5"
   description: Extra attention or contributions needed
 
-- name: roadmap
-  color: "AFA9EC"
-  description: Tied to a planned roadmap item
+# ============================================================
 
-- name: dependencies
-  color: "B4B2A9"
-  description: Dependency update (Dependabot or manual)
+# Resolution
 
-- name: go
-  color: "85B7EB"
-  description: Relates to the Go backend
-
-- name: javascript
-  color: "FAC775"
-  description: Relates to the Next.js frontend
-
-- name: docker
-  color: "F5C4B3"
-  description: Relates to Docker or Docker Compose
-
-- name: github-actions
-  color: "D3D1C7"
-  description: Relates to CI/CD workflows
-
-- name: wontfix
-  color: "B4B2A9"
-  description: This will not be worked on
+# ============================================================
 
 - name: duplicate
   color: "D3D1C7"
@@ -60,3 +126,7 @@
 - name: invalid
   color: "F09595"
   description: This does not seem right or is out of scope
+
+- name: wontfix
+  color: "B4B2A9"
+  description: This will not be worked on
