@@ -28,14 +28,24 @@ Analyze all staged and unstaged changes in the repository, then propose a set of
 5. **On confirmation**
    - For each proposed commit (in order):
       - Stage only the relevant files explicitly: `git add <file1> <file2> ...`
-      - If the commit has only a subject line, use: `git commit -m "<subject>"`
-      - If the commit has a body or footer (e.g. breaking changes), use a heredoc to preserve formatting:
+      - Always commit using a heredoc to preserve formatting and include the co-author trailer:
+
+         ```
+         git commit -F - <<'EOF'
+         feat(api): add endpoint for user profile
+
+         Co-authored-by: Claude <claude@anthropic.com>
+         EOF
+         ```
+
+      - For commits with a body or breaking change footer, place `Co-authored-by` after the footer:
 
          ```
          git commit -F - <<'EOF'
          feat(api)!: replace pagination API
 
          BREAKING CHANGE: the `page` param was removed in favor of `cursor`.
+         Co-authored-by: Claude <claude@anthropic.com>
          EOF
          ```
 
