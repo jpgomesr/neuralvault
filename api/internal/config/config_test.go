@@ -35,9 +35,9 @@ func setValidEnv(t *testing.T) {
 	t.Setenv("POSTGRES_NAME", "db")
 	t.Setenv("POSTGRES_SSL_MODE", "disable")
 
-	t.Setenv("QDGRANT_PORT", "6333")
-	t.Setenv("QDGRANT_GRPC_PORT", "6334")
-	t.Setenv("QDGRANT_URL", "http://localhost:6333")
+	t.Setenv("QDRANT_PORT", "6333")
+	t.Setenv("QDRANT_GRPC_PORT", "6334")
+	t.Setenv("QDRANT_URL", "http://localhost:6333")
 
 	t.Setenv("OLLAMA_PORT", "11434")
 	t.Setenv("OLLAMA_URL", "http://localhost:11434")
@@ -233,7 +233,7 @@ func TestLoadConfig_InvalidQdrantPort(t *testing.T) {
 	t.Setenv("CONFIG_DIR", configDir)
 
 	setValidEnv(t)
-	t.Setenv("QDGRANT_PORT", "70000")
+	t.Setenv("QDRANT_PORT", "70000")
 
 	_, err := loadConfig()
 	if err == nil {
@@ -253,7 +253,7 @@ func TestLoadConfig_InvalidQdrantGrpcPort(t *testing.T) {
 	t.Setenv("CONFIG_DIR", configDir)
 
 	setValidEnv(t)
-	t.Setenv("QDGRANT_GRPC_PORT", "70000")
+	t.Setenv("QDRANT_GRPC_PORT", "70000")
 
 	_, err := loadConfig()
 	if err == nil {
@@ -353,7 +353,7 @@ func TestLoadConfig_MissingRequiredStringFields(t *testing.T) {
 		{name: "postgres username", envVar: "POSTGRES_USERNAME", fieldName: "Postgres.Username"},
 		{name: "postgres password", envVar: "POSTGRES_PASSWORD", fieldName: "Postgres.Password"},
 		{name: "postgres name", envVar: "POSTGRES_NAME", fieldName: "Postgres.Name"},
-		{name: "qdrant url", envVar: "QDGRANT_URL", fieldName: "Qdrant.URL"},
+		{name: "qdrant url", envVar: "QDRANT_URL", fieldName: "Qdrant.URL"},
 		{name: "ollama url", envVar: "OLLAMA_URL", fieldName: "Ollama.URL"},
 		{name: "ollama embedding model", envVar: "OLLAMA_EMBEDDING_MODEL", fieldName: "Ollama.EmbeddingModel"},
 	}
@@ -401,9 +401,9 @@ func TestLoadConfig_DotEnvLoading(t *testing.T) {
 		"POSTGRES_PASSWORD",
 		"POSTGRES_NAME",
 		"POSTGRES_SSL_MODE",
-		"QDGRANT_PORT",
-		"QDGRANT_GRPC_PORT",
-		"QDGRANT_URL",
+		"QDRANT_PORT",
+		"QDRANT_GRPC_PORT",
+		"QDRANT_URL",
 		"OLLAMA_PORT",
 		"OLLAMA_URL",
 		"OLLAMA_EMBEDDING_MODEL",
@@ -421,9 +421,9 @@ func TestLoadConfig_DotEnvLoading(t *testing.T) {
 		"POSTGRES_USERNAME=baseuser",
 		"POSTGRES_NAME=basedb",
 		"POSTGRES_SSL_MODE=disable",
-		"QDGRANT_PORT=6333",
-		"QDGRANT_GRPC_PORT=6334",
-		"QDGRANT_URL=http://localhost:6333",
+		"QDRANT_PORT=6333",
+		"QDRANT_GRPC_PORT=6334",
+		"QDRANT_URL=http://localhost:6333",
 		"OLLAMA_PORT=11434",
 		"OLLAMA_URL=http://localhost:11434",
 		"OLLAMA_EMBEDDING_MODEL=nomic-embed-text",

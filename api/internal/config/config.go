@@ -18,7 +18,7 @@ import (
 type Config struct {
 	Server   Server   `envconfig:"SERVER"`
 	Postgres Postgres `envconfig:"POSTGRES"`
-	Qdrant   Qdrant   `envconfig:"QDGRANT"`
+	Qdrant   Qdrant   `envconfig:"QDRANT"`
 	Ollama   Ollama   `envconfig:"OLLAMA"`
 }
 
@@ -36,6 +36,8 @@ type Postgres struct {
 	Password string `envconfig:"PASSWORD" validate:"required"`
 	Name     string `envconfig:"NAME" validate:"required"`
 	SSLMode  string `envconfig:"SSL_MODE" default:"disable" validate:"oneof=disable allow prefer require verify-ca verify-full"`
+	MaxConns int    `envconfig:"MAXCONNS" default:"10" validate:"gte=1,lte=65535"`
+	MinConns int    `envconfig:"MINCONNS" default:"0" validate:"gte=1,lte=65535"`
 }
 
 // Qdrant contains vector database connection settings.
@@ -198,4 +200,12 @@ func validateConfig(cfg *Config) error {
 	}
 
 	return fmt.Errorf("validation errors: %v", errs)
+}
+
+// DSN returns the structured DSN config
+func DSN() string {
+	return fmt.Sprintf(
+		"postgres://%s:%s@%s:%d/%s?sslmode=%s",
+		cfg.Postgres.Username, cfg.Postgres.Password, cfg.Postgres.Host, cfg.Postgres.Port, cfg.Postgres.Name, cfg.Postgres.SSLMode,
+	)
 }
