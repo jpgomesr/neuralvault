@@ -10,7 +10,7 @@ import (
 )
 
 func NewPool(ctx context.Context, cfg config.Config) (*pgxpool.Pool, error) {
-	poolCfg, err := pgxpool.ParseConfig(config.DSN())
+	poolCfg, err := pgxpool.ParseConfig(cfg.Postgres.DSN())
 	if err != nil {
 		return nil, fmt.Errorf("parsing postgres pool config: %w", err)
 	}
