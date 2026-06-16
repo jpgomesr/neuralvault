@@ -80,6 +80,28 @@ func TestNewPool_Success(t *testing.T) {
 	}
 }
 
+// TestNewPool_ParseConfigFailure verifies that NewPool returns an error
+// when the DSN is malformed (unquoted space in host breaks the key=value parser).
+func TestNewPool_ParseConfigFailure(t *testing.T) {
+	cfg := config.Config{
+		Postgres: config.Postgres{
+			Host:     "local host", // unquoted space splits into two tokens; pgx rejects it
+			Port:     5432,
+			Username: "user",
+			Password: "pass",
+			Name:     "db",
+			SSLMode:  "disable",
+			MaxConns: 2,
+			MinConns: 0,
+		},
+	}
+
+	_, err := postgres.NewPool(context.Background(), cfg)
+	if err == nil {
+		t.Fatal("expected error for malformed DSN, got nil")
+	}
+}
+
 // TestNewPool_PingFailure verifies that NewPool returns an error when the
 // database is unreachable (connection refused at Ping time).
 func TestNewPool_PingFailure(t *testing.T) {
