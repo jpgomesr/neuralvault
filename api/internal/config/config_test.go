@@ -384,6 +384,31 @@ func TestLoadConfig_MissingRequiredStringFields(t *testing.T) {
 	}
 }
 
+// Ensures the package-level DSN helper returns a valid postgres:// URL
+// that includes the host and database name from the loaded config.
+func TestDSN_ReturnsURL(t *testing.T) {
+	resetGlobals()
+
+	configDir := t.TempDir()
+	t.Setenv("CONFIG_DIR", configDir)
+	setValidEnv(t)
+
+	if _, err := Load(); err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+
+	dsn := DSN()
+	if !strings.HasPrefix(dsn, "postgres://") {
+		t.Fatalf("expected postgres:// scheme, got: %s", dsn)
+	}
+	if !strings.Contains(dsn, "localhost") {
+		t.Fatalf("expected localhost in DSN, got: %s", dsn)
+	}
+	if !strings.Contains(dsn, "/db") {
+		t.Fatalf("expected /db in DSN, got: %s", dsn)
+	}
+}
+
 // Ensures environment-specific .env files override values
 // from the base .env file.
 func TestLoadConfig_DotEnvLoading(t *testing.T) {
