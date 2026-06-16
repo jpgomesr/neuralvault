@@ -37,7 +37,7 @@ type Postgres struct {
 	Name     string `envconfig:"NAME" validate:"required"`
 	SSLMode  string `envconfig:"SSL_MODE" default:"disable" validate:"oneof=disable allow prefer require verify-ca verify-full"`
 	MaxConns int    `envconfig:"MAXCONNS" default:"10" validate:"gte=1,lte=65535"`
-	MinConns int    `envconfig:"MINCONNS" default:"0" validate:"gte=1,lte=65535"`
+	MinConns int    `envconfig:"MINCONNS" default:"0" validate:"gte=0,lte=65535"`
 }
 
 // Qdrant contains vector database connection settings.
