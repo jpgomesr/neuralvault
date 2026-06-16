@@ -57,7 +57,7 @@ func main() {
 	}
 
 	command := os.Args[1]
-	if err := goose.Run(command, db, "internal/storage/postgres/migrations"); err != nil {
+	if err := goose.RunContext(ctx, command, db, "internal/storage/postgres/migrations"); err != nil {
 		fmt.Fprintf(os.Stderr, "goose %s: %v\n", command, err)
 		os.Exit(1)
 	}
