@@ -16,6 +16,28 @@ jobs:
       run:
         working-directory: api
 
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: neuralvault
+          POSTGRES_PASSWORD: neuralvault
+          POSTGRES_DB: neuralvault
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    env:
+      POSTGRES_HOST: localhost
+      POSTGRES_PORT: 5432
+      POSTGRES_USERNAME: neuralvault
+      POSTGRES_PASSWORD: neuralvault
+      POSTGRES_NAME: neuralvault
+
     steps:
       - uses: actions/checkout@v5
 
