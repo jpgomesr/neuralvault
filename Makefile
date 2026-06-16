@@ -1,4 +1,4 @@
-.PHONY: help run build test lint migrate up down logs
+.PHONY: help run build test lint migrate migrate-up migrate-down migrate-status up down logs
 
 API_DIR := api
 
@@ -9,7 +9,10 @@ help:
 	@echo "  build    Compile the API binary to dist/"
 	@echo "  test     Run all Go tests with race detector"
 	@echo "  lint     Run golangci-lint on the API"
-	@echo "  migrate  Run database migrations"
+	@echo "  migrate-up      Apply all pending migrations"
+	@echo "  migrate-down    Roll back the last migration"
+	@echo "  migrate-status  Show migration status"
+	@echo "  migrate CMD=<cmd>  Run a specific goose command"
 	@echo "  up       Start infrastructure services (postgres, qdrant, ollama)"
 	@echo "  down     Stop infrastructure services"
 	@echo "  logs     Tail logs from all infrastructure services"
@@ -27,8 +30,17 @@ test:
 lint:
 	cd $(API_DIR) && golangci-lint run
 
+migrate-up:
+	cd $(API_DIR) && go run ./cmd/migrate up
+
+migrate-down:
+	cd $(API_DIR) && go run ./cmd/migrate down
+
+migrate-status:
+	cd $(API_DIR) && go run ./cmd/migrate status
+
 migrate:
-	cd $(API_DIR) && go run ./cmd/migrate
+	cd $(API_DIR) && go run ./cmd/migrate $(CMD)
 
 up:
 	docker compose up -d

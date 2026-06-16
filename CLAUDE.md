@@ -59,10 +59,8 @@ Config is loaded once at startup via `sync.Once` and validated with `go-playgrou
 |--------|-----------|
 | `Server` | `SERVER_` |
 | `Postgres` | `POSTGRES_` |
-| `Qdrant` | `QDGRANT_` ← note the typo, it is intentional in code |
+| `Qdrant` | `QDRANT_` ← note the typo, it is intentional in code |
 | `Ollama` | `OLLAMA_` |
-
-> **Note:** `env.example` currently uses `API_PORT`/`API_ENV` instead of `SERVER_PORT`/`SERVER_ENV`. The table above reflects the actual code — `env.example` needs to be updated to match.
 
 In non-production environments, `.env` is loaded first, then `.env.<SERVER_ENV>` overrides it. In production, only system env vars are used.
 
