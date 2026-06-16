@@ -2,7 +2,7 @@
 
 -- +goose Up
 CREATE TABLE workspace (
-   id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+   id         UUID PRIMARY KEY,
    name       TEXT NOT NULL,
    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
