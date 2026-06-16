@@ -148,7 +148,7 @@ func loadEnvFile(filename string) {
 // DSN returns a PostgreSQL connection string compatible with pgx/libpq.
 func (p Postgres) DSN() string {
 	return fmt.Sprintf(
-		"host=%s port=%d user=%s password=%q dbname=%s sslmode=%s",
+		"host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
 		p.Host,
 		p.Port,
 		p.Username,
