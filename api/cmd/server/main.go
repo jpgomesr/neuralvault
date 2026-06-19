@@ -40,7 +40,11 @@ func main() {
 		slog.Error("failed to connect to qdrant", "err", err)
 		os.Exit(1)
 	}
-	defer qdrantClient.Close()
+	defer func() {
+		if err := qdrantClient.Close(); err != nil {
+			slog.Error("failed to close qdrant", "err", err)
+		}
+	}()
 
 	r := router.NewRouter(cfg)
 
