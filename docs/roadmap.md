@@ -8,7 +8,7 @@ Core retrieval pipeline.
 
 - [ ] Chunking engine
 - [ ] Embedding generation
-- [ ] Qdrant vector storage
+- [X] Qdrant vector storage
 - [ ] Basic chat interface
 - [ ] Ollama local model support
 

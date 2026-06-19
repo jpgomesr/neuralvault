@@ -108,12 +108,12 @@ Table-driven tests with `t.Run`. Config tests must call `resetGlobals()` (define
 - Config loading (`internal/config/`)
 - Health endpoint (`internal/health/`) — handler, service, routes mounted at `/health`
 - CI pipelines (lint, test, build)
-
-### In progress
-- `PostgreSQL` connection (without abstraction at this point)
-- `Qdrant` connection (without abstraction at this point)
+- PostgreSQL connection pool (`internal/storage/`) — `Pool` interface backed by `pgxpool`, migrations under `storage/postgres/migrations/`
+- Qdrant client (`internal/vectorstorage/`) — `Client` interface with `Upsert`, `Query`, `Delete`, `Count`; `ensureCollection` runs on startup
 
 ### Not started
+- Chunking engine
+- Embedding generation
 - Retrieval engine
 - LLM provider integration
 - Frontend
