@@ -42,9 +42,13 @@ type Postgres struct {
 
 // Qdrant contains vector database connection settings.
 type Qdrant struct {
-	Port     int    `envconfig:"PORT" validate:"required,gte=1,lte=65535"`
-	GrpcPort int    `envconfig:"GRPC_PORT" validate:"required,gte=1,lte=65535"`
-	URL      string `envconfig:"URL" validate:"required"`
+	Port           int    `envconfig:"PORT" validate:"required,gte=1,lte=65535"`
+	GrpcPort       int    `envconfig:"GRPC_PORT" validate:"required,gte=1,lte=65535"`
+	URL            string `envconfig:"URL" validate:"required"`
+	UseTLS         bool   `envconfig:"USE_TLS" default:"false"`
+	APIKey         string `envconfig:"API_KEY" validate:"required"`
+	CollectionName string `envconfig:"COLLECTION_NAME" validate:"required"`
+	VectorSize     uint64 `envconfig:"VECTOR_SIZE" validate:"required"`
 }
 
 // Ollama contains local-LLM configuration.

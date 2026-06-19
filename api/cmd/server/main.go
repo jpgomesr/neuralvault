@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 	"os"
@@ -8,6 +9,8 @@ import (
 	"github.com/jpgomesr/NeuralVault/internal/config"
 	"github.com/jpgomesr/NeuralVault/internal/logger"
 	"github.com/jpgomesr/NeuralVault/internal/router"
+	"github.com/jpgomesr/NeuralVault/internal/storage"
+	"github.com/jpgomesr/NeuralVault/internal/vectorstorage"
 )
 
 // @title NeuralVault API
@@ -22,6 +25,26 @@ func main() {
 		slog.Error("failed to load config", "err", err)
 		os.Exit(1)
 	}
+
+	ctx := context.Background()
+
+	pgPool, err := storage.NewPool(ctx, *cfg)
+	if err != nil {
+		slog.Error("failed to connect to postgres", "err", err)
+		os.Exit(1)
+	}
+	defer pgPool.Close()
+
+	qdrantClient, err := vectorstorage.NewClient(ctx, cfg)
+	if err != nil {
+		slog.Error("failed to connect to qdrant", "err", err)
+		os.Exit(1)
+	}
+	defer func() {
+		if err := qdrantClient.Close(); err != nil {
+			slog.Error("failed to close qdrant", "err", err)
+		}
+	}()
 
 	r := router.NewRouter(cfg)
 
