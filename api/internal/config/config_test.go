@@ -38,6 +38,9 @@ func setValidEnv(t *testing.T) {
 	t.Setenv("QDRANT_PORT", "6333")
 	t.Setenv("QDRANT_GRPC_PORT", "6334")
 	t.Setenv("QDRANT_URL", "http://localhost:6333")
+	t.Setenv("QDRANT_API_KEY", "test-key")
+	t.Setenv("QDRANT_COLLECTION_NAME", "neuralvault")
+	t.Setenv("QDRANT_VECTOR_SIZE", "768")
 
 	t.Setenv("OLLAMA_PORT", "11434")
 	t.Setenv("OLLAMA_URL", "http://localhost:11434")
@@ -354,6 +357,8 @@ func TestLoadConfig_MissingRequiredStringFields(t *testing.T) {
 		{name: "postgres password", envVar: "POSTGRES_PASSWORD", fieldName: "Postgres.Password"},
 		{name: "postgres name", envVar: "POSTGRES_NAME", fieldName: "Postgres.Name"},
 		{name: "qdrant url", envVar: "QDRANT_URL", fieldName: "Qdrant.URL"},
+		{name: "qdrant api key", envVar: "QDRANT_API_KEY", fieldName: "Qdrant.APIKey"},
+		{name: "qdrant collection name", envVar: "QDRANT_COLLECTION_NAME", fieldName: "Qdrant.CollectionName"},
 		{name: "ollama url", envVar: "OLLAMA_URL", fieldName: "Ollama.URL"},
 		{name: "ollama embedding model", envVar: "OLLAMA_EMBEDDING_MODEL", fieldName: "Ollama.EmbeddingModel"},
 	}
@@ -429,6 +434,9 @@ func TestLoadConfig_DotEnvLoading(t *testing.T) {
 		"QDRANT_PORT",
 		"QDRANT_GRPC_PORT",
 		"QDRANT_URL",
+		"QDRANT_API_KEY",
+		"QDRANT_COLLECTION_NAME",
+		"QDRANT_VECTOR_SIZE",
 		"OLLAMA_PORT",
 		"OLLAMA_URL",
 		"OLLAMA_EMBEDDING_MODEL",
@@ -449,6 +457,9 @@ func TestLoadConfig_DotEnvLoading(t *testing.T) {
 		"QDRANT_PORT=6333",
 		"QDRANT_GRPC_PORT=6334",
 		"QDRANT_URL=http://localhost:6333",
+		"QDRANT_API_KEY=test-key",
+		"QDRANT_COLLECTION_NAME=neuralvault",
+		"QDRANT_VECTOR_SIZE=768",
 		"OLLAMA_PORT=11434",
 		"OLLAMA_URL=http://localhost:11434",
 		"OLLAMA_EMBEDDING_MODEL=nomic-embed-text",
