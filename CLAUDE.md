@@ -110,9 +110,9 @@ Table-driven tests with `t.Run`. Config tests must call `resetGlobals()` (define
 - CI pipelines (lint, test, build)
 - PostgreSQL connection pool (`internal/storage/`) — `Pool` interface backed by `pgxpool`, migrations under `storage/postgres/migrations/`
 - Qdrant client (`internal/vectorstorage/`) — `Client` interface with `Upsert`, `Query`, `Delete`, `Count`; `ensureCollection` runs on startup
+- Chunking engine (`internal/chunking/`) — `Splitter` interface + `ChunkService` with `ChunkSource`, `ListChunks`, `DeleteChunks`; concrete splitters under `chunking/markdown/` and `chunking/text/`
 
 ### Not started
-- Chunking engine
 - Embedding generation
 - Retrieval engine
 - LLM provider integration

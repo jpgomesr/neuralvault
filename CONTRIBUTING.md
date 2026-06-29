@@ -133,6 +133,11 @@ NeuralVault/
 │   │   │   ├── claude/         # Claude implementation (planned)
 │   │   │   ├── gemini/         # Gemini implementation (planned)
 │   │   │   └── ollama/         # Ollama implementation (planned)
+│   │   ├── chunking/           # Text splitting
+│   │   │   ├── chunking.go     # Splitter interface and Span type
+│   │   │   ├── service.go      # ChunkService — ChunkSource, ListChunks, DeleteChunks
+│   │   │   ├── markdown/       # Markdown section splitter
+│   │   │   └── text/           # Plain-text splitter
 │   │   ├── health/             # System health status
 │   │   │   ├── handler.go      # HTTP handler
 │   │   │   ├── service.go      # Business logic interface and implementation
