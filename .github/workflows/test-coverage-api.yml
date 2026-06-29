@@ -51,6 +51,9 @@ jobs:
       QDRANT_URL: localhost
       QDRANT_GRPC_PORT: 6334
       QDRANT_API_KEY: ""
+      MINIO_ENDPOINT: localhost:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
 
     steps:
       - uses: actions/checkout@v7
@@ -58,6 +61,19 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: api/go.mod
+
+      # GitHub Actions services do not support custom commands, so MinIO is
+      # started as a Docker container in a step instead.
+      - name: Start MinIO
+        run: |
+          docker run -d --name neuralvault-minio \
+            -p 9000:9000 \
+            -e MINIO_ROOT_USER=minioadmin \
+            -e MINIO_ROOT_PASSWORD=minioadmin \
+            minio/minio:latest server /data
+          for i in $(seq 30); do
+            curl -sf http://localhost:9000/minio/health/live && break || sleep 1
+          done
 
       - name: Run tests with coverage
         run: go test ./... -race -coverprofile=coverage.out
