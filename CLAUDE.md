@@ -11,7 +11,7 @@ Open-source AI memory platform: indexes knowledge sources (Obsidian, Git, PDFs),
 ### Infrastructure (required before running the API or frontend locally)
 
 ```bash
-docker compose up -d qdrant postgres ollama
+docker compose up -d qdrant postgres ollama minio
 ollama pull nomic-embed-text
 ```
 
@@ -59,8 +59,9 @@ Config is loaded once at startup via `sync.Once` and validated with `go-playgrou
 |--------|-----------|
 | `Server` | `SERVER_` |
 | `Postgres` | `POSTGRES_` |
-| `Qdrant` | `QDRANT_` ← note the typo, it is intentional in code |
+| `Qdrant` | `QDRANT_` |
 | `Ollama` | `OLLAMA_` |
+| `MinIO` | `MINIO_` |
 
 In non-production environments, `.env` is loaded first, then `.env.<SERVER_ENV>` overrides it. In production, only system env vars are used.
 
@@ -110,9 +111,17 @@ Table-driven tests with `t.Run`. Config tests must call `resetGlobals()` (define
 - CI pipelines (lint, test, build)
 - PostgreSQL connection pool (`internal/storage/`) — `Pool` interface backed by `pgxpool`, migrations under `storage/postgres/migrations/`
 - Qdrant client (`internal/vectorstorage/`) — `Client` interface with `Upsert`, `Query`, `Delete`, `Count`; `ensureCollection` runs on startup
+- Chunking engine (`internal/chunking/`) — `Splitter` interface + `ChunkService` with `ChunkSource`, `ListChunks`, `DeleteChunks`; concrete splitters under `chunking/markdown/` and `chunking/text/`
+- Source reader (`internal/sourcereader/`) — `Reader` interface + `FileReader` that walks a local directory and maps files to `ChunkRequest` values
+- Object storage (`internal/objectstorage/`) — `Client` interface backed by MinIO (S3-compatible); `ensureBucket` runs on startup
+- Sources endpoints (`internal/sources/`) — handler, service, routes mounted at `/sources`
+  - `POST /sources` — multipart upload → MinIO → 202 Accepted; indexing runs in background
+  - `POST /sources/{id}/ingest` — re-download from MinIO and re-index in background
+  - `GET /sources/{id}/status` — SSE stream of indexing progress (heartbeat every 30s, timeout 15min)
+  - `GET /sources?workspace_id=` — list sources for a workspace
+  - `GET /sources/{id}/chunks` — list indexed chunks for a source
 
 ### Not started
-- Chunking engine
 - Embedding generation
 - Retrieval engine
 - LLM provider integration
