@@ -46,7 +46,7 @@ func main() {
 		}
 	}()
 
-	r := router.NewRouter(cfg)
+	r := router.NewRouter(cfg, pgPool)
 
 	addr := ":8080"
 

@@ -17,9 +17,12 @@ type GitChunkMetadata struct {
 
 // FileChunkMetadata identifies the location of a chunk within a file source.
 type FileChunkMetadata struct {
-	FilePath string `json:"file_path"`
-	Page     int    `json:"page,omitempty"`
-	Heading  string `json:"heading,omitempty"`
+	FilePath  string `json:"file_path"`
+	Page      int    `json:"page,omitempty"`
+	Heading   string `json:"heading,omitempty"`
+	Level     int    `json:"level,omitempty"`      // ATX heading level 1-6; 0 means no heading
+	StartLine int    `json:"start_line,omitempty"` // 1-based; 0 means not tracked
+	EndLine   int    `json:"end_line,omitempty"`   // 1-based inclusive; 0 means not tracked
 }
 
 // WebChunkMetadata identifies the location of a chunk within a web source.
