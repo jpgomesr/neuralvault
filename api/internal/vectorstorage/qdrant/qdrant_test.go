@@ -2,47 +2,66 @@ package qdrant_test
 
 import (
 	"context"
+	"fmt"
 	"os"
-	"strconv"
 	"testing"
+
+	"github.com/testcontainers/testcontainers-go"
+	"github.com/testcontainers/testcontainers-go/wait"
 
 	"github.com/jpgomesr/NeuralVault/internal/config"
 	localqdrant "github.com/jpgomesr/NeuralVault/internal/vectorstorage/qdrant"
 )
 
-func envOrDefault(key, def string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return def
+var sharedCfg *config.Config
+
+func TestMain(m *testing.M) {
+	os.Exit(runTests(m))
 }
 
-func envPortOrDefault(key string, def int) int {
-	if v := os.Getenv(key); v != "" {
-		if p, err := strconv.Atoi(v); err == nil {
-			return p
-		}
-	}
-	return def
-}
+func runTests(m *testing.M) int {
+	ctx := context.Background()
 
-func integrationCfg(t *testing.T, collectionName string) *config.Config {
-	t.Helper()
-	if os.Getenv("QDRANT_URL") == "" {
-		t.Skip("QDRANT_URL not set; skipping qdrant integration test")
+	ctr, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
+		ContainerRequest: testcontainers.ContainerRequest{
+			Image:        "qdrant/qdrant:v1.18.2",
+			ExposedPorts: []string{"6333/tcp", "6334/tcp"},
+			WaitingFor:   wait.ForHTTP("/healthz").WithPort("6333/tcp"),
+		},
+		Started: true,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "start qdrant container: %v\n", err)
+		return 1
 	}
-	return &config.Config{
+	defer func() { _ = ctr.Terminate(ctx) }()
+
+	host, err := ctr.Host(ctx)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "get container host: %v\n", err)
+		return 1
+	}
+	grpcPort, err := ctr.MappedPort(ctx, "6334")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "get mapped grpc port: %v\n", err)
+		return 1
+	}
+
+	sharedCfg = &config.Config{
 		Qdrant: config.Qdrant{
-			URL:            envOrDefault("QDRANT_URL", "localhost"),
-			GrpcPort:       envPortOrDefault("QDRANT_GRPC_PORT", 6334),
-			APIKey:         envOrDefault("QDRANT_API_KEY", ""),
+			URL:            host,
+			GrpcPort:       int(grpcPort.Num()),
+			APIKey:         "",
 			UseTLS:         false,
-			CollectionName: collectionName,
+			CollectionName: "test",
 			VectorSize:     768,
 		},
 	}
+
+	return m.Run()
 }
 
+// unreachableCfg returns a config pointing at a port with nothing listening.
 func unreachableCfg() *config.Config {
 	return &config.Config{
 		Qdrant: config.Qdrant{
@@ -56,10 +75,18 @@ func unreachableCfg() *config.Config {
 	}
 }
 
-// TestNewPool_Success verifies a client is returned and HealthCheck succeeds
-// against a live Qdrant instance. Requires QDRANT_URL to be set.
+// TestNewPool_Success verifies a client connects and HealthCheck succeeds.
 func TestNewPool_Success(t *testing.T) {
-	cfg := integrationCfg(t, "test_newpool_success")
+	cfg := &config.Config{
+		Qdrant: config.Qdrant{
+			URL:            sharedCfg.Qdrant.URL,
+			GrpcPort:       sharedCfg.Qdrant.GrpcPort,
+			APIKey:         sharedCfg.Qdrant.APIKey,
+			UseTLS:         sharedCfg.Qdrant.UseTLS,
+			CollectionName: "test_newpool_success",
+			VectorSize:     768,
+		},
+	}
 
 	client, err := localqdrant.NewPool(context.Background(), cfg)
 	if err != nil {
@@ -71,11 +98,18 @@ func TestNewPool_Success(t *testing.T) {
 	})
 }
 
-// TestNewPool_EnsureCollectionAlreadyExists verifies that calling NewPool a
-// second time with the same collection name succeeds (covers the exists branch
-// inside ensureCollection).
+// TestNewPool_EnsureCollectionAlreadyExists covers the "collection exists" branch.
 func TestNewPool_EnsureCollectionAlreadyExists(t *testing.T) {
-	cfg := integrationCfg(t, "test_idempotent_collection")
+	cfg := &config.Config{
+		Qdrant: config.Qdrant{
+			URL:            sharedCfg.Qdrant.URL,
+			GrpcPort:       sharedCfg.Qdrant.GrpcPort,
+			APIKey:         sharedCfg.Qdrant.APIKey,
+			UseTLS:         sharedCfg.Qdrant.UseTLS,
+			CollectionName: "test_idempotent_collection",
+			VectorSize:     768,
+		},
+	}
 
 	client1, err := localqdrant.NewPool(context.Background(), cfg)
 	if err != nil {
@@ -93,12 +127,9 @@ func TestNewPool_EnsureCollectionAlreadyExists(t *testing.T) {
 	_ = client2.Close()
 }
 
-// TestNewPool_Failure verifies that NewPool returns an error when Qdrant is
-// unreachable (HealthCheck fails with connection refused).
+// TestNewPool_Failure verifies an error is returned when Qdrant is unreachable.
 func TestNewPool_Failure(t *testing.T) {
-	cfg := unreachableCfg()
-
-	_, err := localqdrant.NewPool(context.Background(), cfg)
+	_, err := localqdrant.NewPool(context.Background(), unreachableCfg())
 	if err == nil {
 		t.Fatal("expected error for unreachable host, got nil")
 	}

@@ -3,42 +3,73 @@ package minio_test
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"sort"
 	"testing"
+
+	"github.com/testcontainers/testcontainers-go"
+	"github.com/testcontainers/testcontainers-go/wait"
 
 	"github.com/jpgomesr/NeuralVault/internal/config"
 	"github.com/jpgomesr/NeuralVault/internal/objectstorage"
 	localminio "github.com/jpgomesr/NeuralVault/internal/objectstorage/minio"
 )
 
-func envOrDefault(key, def string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return def
+var sharedCfg *config.Config
+
+func TestMain(m *testing.M) {
+	os.Exit(runTests(m))
 }
 
-// integrationCfg returns a Config pointing at a live MinIO instance.
-// The test is skipped when MINIO_ENDPOINT is not set.
-func integrationCfg(t *testing.T) *config.Config {
-	t.Helper()
-	if os.Getenv("MINIO_ENDPOINT") == "" {
-		t.Skip("MINIO_ENDPOINT not set; skipping MinIO integration test")
+func runTests(m *testing.M) int {
+	ctx := context.Background()
+
+	ctr, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
+		ContainerRequest: testcontainers.ContainerRequest{
+			Image:        "minio/minio:latest",
+			ExposedPorts: []string{"9000/tcp"},
+			Env: map[string]string{
+				"MINIO_ROOT_USER":     "minioadmin",
+				"MINIO_ROOT_PASSWORD": "minioadmin",
+			},
+			Cmd:        []string{"server", "/data"},
+			WaitingFor: wait.ForHTTP("/minio/health/live").WithPort("9000/tcp"),
+		},
+		Started: true,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "start minio container: %v\n", err)
+		return 1
 	}
-	return &config.Config{
+	defer func() { _ = ctr.Terminate(ctx) }()
+
+	host, err := ctr.Host(ctx)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "get container host: %v\n", err)
+		return 1
+	}
+	port, err := ctr.MappedPort(ctx, "9000")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "get mapped port: %v\n", err)
+		return 1
+	}
+
+	sharedCfg = &config.Config{
 		MinIO: config.MinIO{
-			Endpoint:  envOrDefault("MINIO_ENDPOINT", "localhost:9000"),
-			AccessKey: envOrDefault("MINIO_ACCESS_KEY", "minioadmin"),
-			SecretKey: envOrDefault("MINIO_SECRET_KEY", "minioadmin"),
+			Endpoint:  fmt.Sprintf("%s:%d", host, port.Num()),
+			AccessKey: "minioadmin",
+			SecretKey: "minioadmin",
 			Bucket:    "neuralvault-test",
 			UseSSL:    false,
 		},
 	}
+
+	return m.Run()
 }
 
-// unreachableCfg returns a Config pointing at a port that has nothing listening.
+// unreachableCfg returns a config pointing at a port with nothing listening.
 func unreachableCfg() *config.Config {
 	return &config.Config{
 		MinIO: config.MinIO{
@@ -51,10 +82,8 @@ func unreachableCfg() *config.Config {
 	}
 }
 
-// TestNew_Success verifies that New connects and creates the bucket.
 func TestNew_Success(t *testing.T) {
-	cfg := integrationCfg(t)
-	_, err := localminio.New(context.Background(), cfg)
+	_, err := localminio.New(context.Background(), sharedCfg)
 	if err != nil {
 		t.Fatalf("expected no error, got: %v", err)
 	}
@@ -62,16 +91,14 @@ func TestNew_Success(t *testing.T) {
 
 // TestNew_BucketAlreadyExists covers the idempotent ensureBucket path.
 func TestNew_BucketAlreadyExists(t *testing.T) {
-	cfg := integrationCfg(t)
-	if _, err := localminio.New(context.Background(), cfg); err != nil {
+	if _, err := localminio.New(context.Background(), sharedCfg); err != nil {
 		t.Fatalf("first call: %v", err)
 	}
-	if _, err := localminio.New(context.Background(), cfg); err != nil {
+	if _, err := localminio.New(context.Background(), sharedCfg); err != nil {
 		t.Fatalf("second call (bucket already exists): %v", err)
 	}
 }
 
-// TestNew_Unreachable verifies that New fails when MinIO is unreachable.
 func TestNew_Unreachable(t *testing.T) {
 	_, err := localminio.New(context.Background(), unreachableCfg())
 	if err == nil {
@@ -79,25 +106,20 @@ func TestNew_Unreachable(t *testing.T) {
 	}
 }
 
-// TestNewClient_Factory verifies the objectstorage.NewClient factory covers the
-// two-line wrapper and returns a Client that satisfies the interface.
+// TestNewClient_Factory verifies the objectstorage.NewClient factory and
+// that the returned value satisfies the Client interface.
 func TestNewClient_Factory(t *testing.T) {
-	cfg := integrationCfg(t)
-	client, err := objectstorage.NewClient(context.Background(), cfg)
+	client, err := objectstorage.NewClient(context.Background(), sharedCfg)
 	if err != nil {
 		t.Fatalf("NewClient: %v", err)
 	}
-	// Verify interface satisfaction by calling a method.
-	_, err = client.ListObjects(context.Background(), "factory-test/")
-	if err != nil {
+	if _, err := client.ListObjects(context.Background(), "factory-test/"); err != nil {
 		t.Fatalf("ListObjects via factory client: %v", err)
 	}
 }
 
-// TestClient_UploadDownloadDelete verifies the happy-path round-trip.
 func TestClient_UploadDownloadDelete(t *testing.T) {
-	cfg := integrationCfg(t)
-	c, err := localminio.New(context.Background(), cfg)
+	c, err := localminio.New(context.Background(), sharedCfg)
 	if err != nil {
 		t.Fatalf("setup: %v", err)
 	}
@@ -130,21 +152,15 @@ func TestClient_UploadDownloadDelete(t *testing.T) {
 	}
 }
 
-// TestClient_ListObjects verifies prefix-filtered listing returns the right keys.
 func TestClient_ListObjects(t *testing.T) {
-	cfg := integrationCfg(t)
-	c, err := localminio.New(context.Background(), cfg)
+	c, err := localminio.New(context.Background(), sharedCfg)
 	if err != nil {
 		t.Fatalf("setup: %v", err)
 	}
 
 	ctx := context.Background()
 	prefix := "test/list-objects/"
-	wantKeys := []string{
-		prefix + "alpha.md",
-		prefix + "beta.md",
-		prefix + "gamma.md",
-	}
+	wantKeys := []string{prefix + "alpha.md", prefix + "beta.md", prefix + "gamma.md"}
 	content := []byte("x")
 
 	for _, key := range wantKeys {
@@ -162,20 +178,17 @@ func TestClient_ListObjects(t *testing.T) {
 	if len(gotKeys) != len(wantKeys) {
 		t.Fatalf("expected %d keys, got %d: %v", len(wantKeys), len(gotKeys), gotKeys)
 	}
-
 	sort.Strings(gotKeys)
 	sort.Strings(wantKeys)
 	for i, k := range wantKeys {
 		if gotKeys[i] != k {
-			t.Errorf("key[%d]: expected %q, got %q", i, k, gotKeys[i])
+			t.Errorf("key[%d]: want %q, got %q", i, k, gotKeys[i])
 		}
 	}
 }
 
-// TestClient_ListObjects_EmptyPrefix verifies an empty result for an unknown prefix.
 func TestClient_ListObjects_EmptyPrefix(t *testing.T) {
-	cfg := integrationCfg(t)
-	c, err := localminio.New(context.Background(), cfg)
+	c, err := localminio.New(context.Background(), sharedCfg)
 	if err != nil {
 		t.Fatalf("setup: %v", err)
 	}
