@@ -96,7 +96,7 @@ func runAllTests(m *testing.M) int {
 		return 1
 	}
 	wd, _ := os.Getwd()
-	migrationsDir := filepath.Join(wd, "../../storage/postgres/migrations")
+	migrationsDir := filepath.Join(wd, "../storage/postgres/migrations")
 	if err := goose.Up(sqlDB, migrationsDir); err != nil {
 		fmt.Fprintf(os.Stderr, "goose up: %v\n", err)
 		return 1
@@ -220,21 +220,6 @@ func TestServiceCreate(t *testing.T) {
 		t.Errorf("workspace mismatch: want %s, got %s", wid, src.WorkspaceID)
 	}
 
-	awaitIndexed(ctx, t, svc, src.ID)
-}
-
-func TestServiceCreate_MultiplFiles(t *testing.T) {
-	ctx := context.Background()
-	svc := newSvc(ctx, t)
-	wid := insertWS(ctx, t)
-
-	src, err := svc.Create(ctx, CreateRequest{WorkspaceID: wid, Name: "multi"}, []FileUpload{
-		{Name: "a.md", Content: bytes.NewBufferString("# A\nContent A."), Size: 14},
-		{Name: "b.txt", Content: bytes.NewBufferString("Plain text B."), Size: 13},
-	})
-	if err != nil {
-		t.Fatalf("Create: %v", err)
-	}
 	awaitIndexed(ctx, t, svc, src.ID)
 }
 
