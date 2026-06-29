@@ -1,0 +1,94 @@
+package sourcereader
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io/fs"
+	"log/slog"
+	"os"
+	"path/filepath"
+
+	"github.com/jpgomesr/NeuralVault/internal/chunking"
+	"github.com/jpgomesr/NeuralVault/internal/model"
+)
+
+// FileReader reads content from a local directory tree.
+type FileReader struct{}
+
+// NewFileReader returns a FileReader.
+func NewFileReader() *FileReader {
+	return &FileReader{}
+}
+
+// Read implements Reader. It decodes FileSourceMetadata from source.Metadata,
+// validates the root path, and walks the directory tree producing one
+// ChunkRequest per supported file (.md, .txt).
+func (r *FileReader) Read(ctx context.Context, source model.Source) ([]chunking.ChunkRequest, error) {
+	var meta model.FileSourceMetadata
+	if err := json.Unmarshal(source.Metadata, &meta); err != nil {
+		return nil, fmt.Errorf("decoding file source metadata: %w", err)
+	}
+
+	if _, err := os.Stat(meta.RootPath); err != nil {
+		return nil, fmt.Errorf("root path %q: %w", meta.RootPath, err)
+	}
+
+	var requests []chunking.ChunkRequest
+
+	err := filepath.WalkDir(meta.RootPath, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return fmt.Errorf("accessing %q: %w", path, err)
+		}
+
+		if d.IsDir() {
+			return nil
+		}
+
+		if !d.Type().IsRegular() {
+			slog.DebugContext(ctx, "skipping non-regular file", "path", path)
+			return nil
+		}
+
+		contentType, ok := contentTypeForExt(filepath.Ext(path))
+		if !ok {
+			slog.DebugContext(ctx, "skipping unsupported extension",
+				"path", path,
+				"ext", filepath.Ext(path),
+			)
+			return nil
+		}
+
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("reading %q: %w", path, err)
+		}
+
+		requests = append(requests, chunking.ChunkRequest{
+			SourceID:    source.ID,
+			WorkspaceID: source.WorkspaceID,
+			Content:     string(content),
+			ContentType: contentType,
+			FilePath:    path,
+		})
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("reading file source: %w", err)
+	}
+
+	return requests, nil
+}
+
+// contentTypeForExt maps a file extension (including the dot) to a ContentType.
+// Returns false if the extension is not supported.
+func contentTypeForExt(ext string) (chunking.ContentType, bool) {
+	switch ext {
+	case ".md":
+		return chunking.ContentTypeMarkdown, true
+	case ".txt":
+		return chunking.ContentTypePlaintext, true
+	default:
+		return "", false
+	}
+}

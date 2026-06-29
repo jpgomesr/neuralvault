@@ -20,6 +20,7 @@ type Config struct {
 	Postgres Postgres `envconfig:"POSTGRES"`
 	Qdrant   Qdrant   `envconfig:"QDRANT"`
 	Ollama   Ollama   `envconfig:"OLLAMA"`
+	MinIO    MinIO    `envconfig:"MINIO"`
 }
 
 // Server contains HTTP server configuration.
@@ -56,6 +57,16 @@ type Ollama struct {
 	Port           int    `envconfig:"PORT" validate:"required,gte=1,lte=65535"`
 	URL            string `envconfig:"URL" validate:"required"`
 	EmbeddingModel string `envconfig:"EMBEDDING_MODEL" validate:"required"`
+}
+
+// MinIO contains object storage configuration.
+// Compatible with any S3-compatible provider (MinIO, AWS S3, Cloudflare R2).
+type MinIO struct {
+	Endpoint  string `envconfig:"ENDPOINT"   validate:"required"`
+	AccessKey string `envconfig:"ACCESS_KEY"  validate:"required"`
+	SecretKey string `envconfig:"SECRET_KEY"  validate:"required"`
+	Bucket    string `envconfig:"BUCKET"      validate:"required"`
+	UseSSL    bool   `envconfig:"USE_SSL"`
 }
 
 var (

@@ -8,6 +8,7 @@ import (
 
 	"github.com/jpgomesr/NeuralVault/internal/config"
 	"github.com/jpgomesr/NeuralVault/internal/logger"
+	"github.com/jpgomesr/NeuralVault/internal/objectstorage"
 	"github.com/jpgomesr/NeuralVault/internal/router"
 	"github.com/jpgomesr/NeuralVault/internal/storage"
 	"github.com/jpgomesr/NeuralVault/internal/vectorstorage"
@@ -46,7 +47,13 @@ func main() {
 		}
 	}()
 
-	r := router.NewRouter(cfg, pgPool)
+	minioClient, err := objectstorage.NewClient(ctx, cfg)
+	if err != nil {
+		slog.Error("failed to connect to minio", "err", err)
+		os.Exit(1)
+	}
+
+	r := router.NewRouter(cfg, pgPool, minioClient)
 
 	addr := ":8080"
 
