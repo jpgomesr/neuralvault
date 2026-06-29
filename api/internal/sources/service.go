@@ -277,7 +277,9 @@ func (s *SourceService) storeFile(ctx context.Context, tempDir string, workspace
 	}
 
 	n, err := io.Copy(out, f.Content)
-	out.Close()
+	if cerr := out.Close(); cerr != nil && err == nil {
+		err = cerr
+	}
 	if err != nil {
 		return fmt.Errorf("writing file %q: %w", f.Name, err)
 	}
@@ -286,7 +288,7 @@ func (s *SourceService) storeFile(ctx context.Context, tempDir string, workspace
 	if err != nil {
 		return fmt.Errorf("opening temp file %q: %w", f.Name, err)
 	}
-	defer uploadFile.Close()
+	defer uploadFile.Close() //nolint:errcheck
 
 	key := fmt.Sprintf("%s/%s/%s", workspaceID, sourceID, filepath.Base(f.Name))
 	if err := s.store.Upload(ctx, key, uploadFile, n); err != nil {
@@ -301,14 +303,14 @@ func (s *SourceService) downloadToTemp(ctx context.Context, key, tempDir string)
 	if err != nil {
 		return fmt.Errorf("downloading %q: %w", key, err)
 	}
-	defer rc.Close()
+	defer rc.Close() //nolint:errcheck
 
 	localPath := filepath.Join(tempDir, filepath.Base(key))
 	out, err := os.Create(localPath)
 	if err != nil {
 		return fmt.Errorf("creating temp file for %q: %w", key, err)
 	}
-	defer out.Close()
+	defer out.Close() //nolint:errcheck
 
 	if _, err := io.Copy(out, rc); err != nil {
 		return fmt.Errorf("writing %q to temp: %w", key, err)

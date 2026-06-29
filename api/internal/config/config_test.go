@@ -45,6 +45,11 @@ func setValidEnv(t *testing.T) {
 	t.Setenv("OLLAMA_PORT", "11434")
 	t.Setenv("OLLAMA_URL", "http://localhost:11434")
 	t.Setenv("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text")
+
+	t.Setenv("MINIO_ENDPOINT", "localhost:9000")
+	t.Setenv("MINIO_ACCESS_KEY", "minioadmin")
+	t.Setenv("MINIO_SECRET_KEY", "minioadmin")
+	t.Setenv("MINIO_BUCKET", "neuralvault")
 }
 
 // Ensures the validator is initialized once.
@@ -361,6 +366,10 @@ func TestLoadConfig_MissingRequiredStringFields(t *testing.T) {
 		{name: "qdrant collection name", envVar: "QDRANT_COLLECTION_NAME", fieldName: "Qdrant.CollectionName"},
 		{name: "ollama url", envVar: "OLLAMA_URL", fieldName: "Ollama.URL"},
 		{name: "ollama embedding model", envVar: "OLLAMA_EMBEDDING_MODEL", fieldName: "Ollama.EmbeddingModel"},
+		{name: "minio endpoint", envVar: "MINIO_ENDPOINT", fieldName: "MinIO.Endpoint"},
+		{name: "minio access key", envVar: "MINIO_ACCESS_KEY", fieldName: "MinIO.AccessKey"},
+		{name: "minio secret key", envVar: "MINIO_SECRET_KEY", fieldName: "MinIO.SecretKey"},
+		{name: "minio bucket", envVar: "MINIO_BUCKET", fieldName: "MinIO.Bucket"},
 	}
 
 	for _, tc := range required {
@@ -440,6 +449,10 @@ func TestLoadConfig_DotEnvLoading(t *testing.T) {
 		"OLLAMA_PORT",
 		"OLLAMA_URL",
 		"OLLAMA_EMBEDDING_MODEL",
+		"MINIO_ENDPOINT",
+		"MINIO_ACCESS_KEY",
+		"MINIO_SECRET_KEY",
+		"MINIO_BUCKET",
 	} {
 		if err := os.Unsetenv(key); err != nil {
 			t.Fatalf("failed to unset %s: %v", key, err)
@@ -463,6 +476,10 @@ func TestLoadConfig_DotEnvLoading(t *testing.T) {
 		"OLLAMA_PORT=11434",
 		"OLLAMA_URL=http://localhost:11434",
 		"OLLAMA_EMBEDDING_MODEL=nomic-embed-text",
+		"MINIO_ENDPOINT=localhost:9000",
+		"MINIO_ACCESS_KEY=minioadmin",
+		"MINIO_SECRET_KEY=minioadmin",
+		"MINIO_BUCKET=neuralvault",
 	}, "\n") + "\n"
 
 	envDev := "POSTGRES_PASSWORD=devpass\n"
