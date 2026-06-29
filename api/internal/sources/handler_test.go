@@ -71,7 +71,7 @@ func multipartUpload(fields map[string]string, fileName, fileContent string) *ht
 		fw, _ := mw.CreateFormFile("files", fileName)
 		_, _ = io.WriteString(fw, fileContent)
 	}
-	mw.Close()
+	_ = mw.Close()
 
 	r := httptest.NewRequest(http.MethodPost, "/sources", &buf)
 	r.Header.Set("Content-Type", mw.FormDataContentType())
@@ -399,7 +399,7 @@ func TestStreamStatus_LiveEvents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET: %v", err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {

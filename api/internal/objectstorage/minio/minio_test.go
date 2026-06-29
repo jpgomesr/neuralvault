@@ -137,7 +137,7 @@ func TestClient_UploadDownloadDelete(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Download: %v", err)
 	}
-	defer rc.Close()
+	defer rc.Close() //nolint:errcheck
 
 	got, err := io.ReadAll(rc)
 	if err != nil {
