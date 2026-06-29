@@ -9,6 +9,7 @@ import "context"
 type Span struct {
 	Content   string
 	Heading   string // populated by the markdown splitter only
+	Level     int    // ATX heading level 1-6; 0 means no heading or not tracked
 	StartLine int    // 1-based; 0 means not tracked by this splitter
 	EndLine   int    // 1-based inclusive; 0 means not tracked by this splitter
 }

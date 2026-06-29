@@ -29,6 +29,7 @@ func (s *Splitter) Split(_ context.Context, text string) ([]chunking.Span, error
 	var spans []chunking.Span
 	var currentLines []string
 	currentHeading := ""
+	currentLevel := 0
 	startLine := 1
 
 	flush := func(endLine int) {
@@ -40,6 +41,7 @@ func (s *Splitter) Split(_ context.Context, text string) ([]chunking.Span, error
 			spans = append(spans, chunking.Span{
 				Content:   content,
 				Heading:   currentHeading,
+				Level:     currentLevel,
 				StartLine: startLine,
 				EndLine:   endLine,
 			})
@@ -57,6 +59,7 @@ func (s *Splitter) Split(_ context.Context, text string) ([]chunking.Span, error
 			spans = append(spans, chunking.Span{
 				Content:   p,
 				Heading:   currentHeading,
+				Level:     currentLevel,
 				StartLine: lineOffset,
 				EndLine:   lineOffset + pLineCount - 1,
 			})
@@ -69,6 +72,7 @@ func (s *Splitter) Split(_ context.Context, text string) ([]chunking.Span, error
 		if level > 0 {
 			flush(i) // i is the 0-based index of the line *before* this heading
 			currentHeading = strings.TrimSpace(strings.TrimLeft(line, "#"))
+			currentLevel = level
 			currentLines = []string{line}
 			startLine = i + 1 // convert to 1-based
 		} else {

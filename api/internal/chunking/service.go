@@ -140,9 +140,12 @@ func (s *ChunkService) DeleteChunks(ctx context.Context, sourceID uuid.UUID) err
 
 func buildMetadata(req ChunkRequest, span Span) (json.RawMessage, error) {
 	meta := model.FileChunkMetadata{
-		FilePath: req.FilePath,
-		Page:     req.PageNumber,
-		Heading:  span.Heading,
+		FilePath:  req.FilePath,
+		Page:      req.PageNumber,
+		Heading:   span.Heading,
+		Level:     span.Level,
+		StartLine: span.StartLine,
+		EndLine:   span.EndLine,
 	}
 	b, err := json.Marshal(meta)
 	if err != nil {
