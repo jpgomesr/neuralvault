@@ -22,6 +22,12 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: api/go.mod
+          cache: true
+
+      - name: Download dependencies
+        run: go mod download
+        env:
+          GOPROXY: https://proxy.golang.org,direct
 
       - name: Run tests with coverage
         run: go test ./... -race -coverprofile=coverage.out
