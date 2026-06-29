@@ -4,5 +4,4 @@ ignore:
   - "api/internal/storage/storage.go"
   - "api/internal/vectorstorage/vectorstorage.go"
   - "api/internal/objectstorage/objectstorage.go"
-  - "api/internal/objectstorage/minio/**"
   - "api/internal/router/router.go"
