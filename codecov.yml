@@ -1,4 +1,5 @@
 ignore:
   - "api/cmd/**"
+  - "api/docs/**"
   - "api/internal/storage/storage.go"
   - "api/internal/vectorstorage/vectorstorage.go"
