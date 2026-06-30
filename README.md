@@ -6,6 +6,8 @@
 
 NeuralVault is an open-source AI memory and contextual retrieval platform. Instead of a chatbot that forgets everything the moment the session ends, NeuralVault indexes your knowledge sources — Obsidian vaults, Git repositories, PDFs, docs — and retrieves the most relevant context for every question you ask.
 
+> **Status:** active development — Phase 1 (Foundation). The ingestion pipeline (chunking, object storage, source endpoints) is functional. Embedding generation, retrieval engine, and frontend are not yet implemented. See the [roadmap](docs/roadmap.md) for the current state.
+
 ---
 
 ## The problem
@@ -18,7 +20,7 @@ NeuralVault connects to your knowledge sources, creates semantic embeddings, and
 
 ---
 
-## Features
+## Planned features
 
 - **Semantic search** — retrieves by meaning, not exact keywords
 - **AI memory** — projects, docs, ADRs, notes, and past fixes persist across sessions
@@ -52,16 +54,16 @@ Streaming response
 
 ## Stack
 
-| Layer      | Technology           |
-| ---------- | -------------------- |
-| Frontend   | Next.js              |
-| Backend    | Go + Chi             |
-| Vector DB  | Qdrant               |
-| Database   | PostgreSQL           |
-| Local AI   | Ollama               |
-| Embeddings | nomic-embed-text     |
-| Streaming  | HTTP Streaming / SSE |
-| Analytics  | PostHog              |
+| Layer      | Technology              |
+| ---------- | ----------------------- |
+| Frontend   | Next.js _(planned)_     |
+| Backend    | Go + Chi                |
+| Vector DB  | Qdrant                  |
+| Database   | PostgreSQL              |
+| Local AI   | Ollama                  |
+| Embeddings | nomic-embed-text        |
+| Streaming  | HTTP Streaming / SSE    |
+| Analytics  | PostHog _(planned)_     |
 
 For the full folder structure see [CONTRIBUTING.md](CONTRIBUTING.md#project-structure).
 
@@ -72,27 +74,33 @@ For the full folder structure see [CONTRIBUTING.md](CONTRIBUTING.md#project-stru
 - [Docker](https://docs.docker.com/get-docker/) and Docker Compose
 - [Ollama](https://ollama.com/) (for local embeddings and models)
 - Go 1.26+ (for local backend development)
-- Node.js 20+ (for local frontend development)
 
 ---
 
-## Quickstart
+## Running locally
+
+The API and its dependencies (Qdrant, PostgreSQL, MinIO, Ollama) can be started with Docker Compose. The frontend does not exist yet.
 
 ```bash
 # Clone the repository
 git clone https://github.com/jpgomesr/neuralvault.git
 cd neuralvault
 
+# Copy and configure environment variables
+cp env.example .env
+
+# Start infrastructure services
+docker compose up -d qdrant postgres ollama minio
+
 # Pull the embedding model
 ollama pull nomic-embed-text
 
-# Start all services
-docker compose up -d
-
-# NeuralVault is now running at http://localhost:3000
+# Run the API
+cd api
+go run ./cmd/server
 ```
 
-> A full setup guide with configuration options is available in [docs/getting-started.md](docs/getting-started.md).
+The API will be available at `http://localhost:8080`. Swagger docs at `http://localhost:8080/swagger/`.
 
 ---
 
