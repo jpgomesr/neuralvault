@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
+	qdrantpb "github.com/qdrant/go-client/qdrant"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 
@@ -20,11 +21,54 @@ import (
 	"github.com/jpgomesr/NeuralVault/internal/chunking/markdown"
 	"github.com/jpgomesr/NeuralVault/internal/chunking/text"
 	"github.com/jpgomesr/NeuralVault/internal/config"
+	"github.com/jpgomesr/NeuralVault/internal/embedding"
 	"github.com/jpgomesr/NeuralVault/internal/model"
 	minioclient "github.com/jpgomesr/NeuralVault/internal/objectstorage/minio"
 	"github.com/jpgomesr/NeuralVault/internal/sourcereader"
 	pgstore "github.com/jpgomesr/NeuralVault/internal/storage/postgres"
 )
+
+// stubEmbedder returns zero-valued vectors of a fixed size.
+// It satisfies embedding.Embedder without requiring a running Ollama instance.
+type stubEmbedder struct{ dim int }
+
+func (s *stubEmbedder) Embed(_ context.Context, _ string) ([]float32, error) {
+	return make([]float32, s.dim), nil
+}
+
+func (s *stubEmbedder) EmbedBatch(_ context.Context, chunks []embedding.Chunk) ([]embedding.Embedding, error) {
+	out := make([]embedding.Embedding, len(chunks))
+	for i, c := range chunks {
+		out[i] = embedding.Embedding{ChunkID: c.ID, Vector: make([]float32, s.dim)}
+	}
+	return out, nil
+}
+
+// stubVectorStore discards all writes and returns no-op results.
+// It satisfies vectorstorage.Client without requiring a running Qdrant instance.
+type stubVectorStore struct{}
+
+func (stubVectorStore) HealthCheck(_ context.Context) (*qdrantpb.HealthCheckReply, error) {
+	return &qdrantpb.HealthCheckReply{}, nil
+}
+func (stubVectorStore) CollectionExists(_ context.Context, _ string) (bool, error) { return true, nil }
+func (stubVectorStore) CreateCollection(_ context.Context, _ *qdrantpb.CreateCollection) error {
+	return nil
+}
+func (stubVectorStore) DeleteCollection(_ context.Context, _ string) error { return nil }
+func (stubVectorStore) Upsert(_ context.Context, _ *qdrantpb.UpsertPoints) (*qdrantpb.UpdateResult, error) {
+	return &qdrantpb.UpdateResult{}, nil
+}
+func (stubVectorStore) Query(_ context.Context, _ *qdrantpb.QueryPoints) ([]*qdrantpb.ScoredPoint, error) {
+	return nil, nil
+}
+func (stubVectorStore) Delete(_ context.Context, _ *qdrantpb.DeletePoints) (*qdrantpb.UpdateResult, error) {
+	return &qdrantpb.UpdateResult{}, nil
+}
+func (stubVectorStore) Count(_ context.Context, _ *qdrantpb.CountPoints) (uint64, error) {
+	return 0, nil
+}
+func (stubVectorStore) Close() error { return nil }
 
 var (
 	sharedPool     *pgxpool.Pool
@@ -163,6 +207,10 @@ func newSvc(ctx context.Context, t *testing.T) *SourceService {
 		sourcereader.NewFileReader(),
 		chunking.NewChunkService(sharedPool, splitters),
 		NewProgressBus(),
+		&stubEmbedder{dim: 768},
+		stubVectorStore{},
+		"test",
+		"nomic-embed-text",
 	)
 }
 
