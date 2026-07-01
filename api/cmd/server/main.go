@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"github.com/jpgomesr/NeuralVault/internal/config"
+	"github.com/jpgomesr/NeuralVault/internal/embedding"
 	"github.com/jpgomesr/NeuralVault/internal/logger"
 	"github.com/jpgomesr/NeuralVault/internal/objectstorage"
 	"github.com/jpgomesr/NeuralVault/internal/router"
@@ -53,7 +54,13 @@ func main() {
 		os.Exit(1)
 	}
 
-	r := router.NewRouter(cfg, pgPool, minioClient)
+	embedder, err := embedding.NewEmbedder(ctx, cfg)
+	if err != nil {
+		slog.Error("failed to initialise embedder", "err", err)
+		os.Exit(1)
+	}
+
+	r := router.NewRouter(cfg, pgPool, minioClient, embedder, qdrantClient)
 
 	addr := ":8080"
 

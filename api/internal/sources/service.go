@@ -10,11 +10,15 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	qdrantpb "github.com/qdrant/go-client/qdrant"
+
 	"github.com/jpgomesr/NeuralVault/internal/chunking"
+	"github.com/jpgomesr/NeuralVault/internal/embedding"
 	"github.com/jpgomesr/NeuralVault/internal/model"
 	"github.com/jpgomesr/NeuralVault/internal/objectstorage"
 	"github.com/jpgomesr/NeuralVault/internal/sourcereader"
 	"github.com/jpgomesr/NeuralVault/internal/storage"
+	"github.com/jpgomesr/NeuralVault/internal/vectorstorage"
 )
 
 // FileUpload carries the content of a single uploaded file.
@@ -46,11 +50,15 @@ type Service interface {
 
 // SourceService is the concrete implementation of Service.
 type SourceService struct {
-	pool    storage.Pool
-	store   objectstorage.Client
-	reader  sourcereader.Reader
-	chunker *chunking.ChunkService
-	bus     *ProgressBus
+	pool           storage.Pool
+	store          objectstorage.Client
+	reader         sourcereader.Reader
+	chunker        *chunking.ChunkService
+	bus            *ProgressBus
+	embedder       embedding.Embedder
+	vectorStore    vectorstorage.Client
+	collectionName string
+	embeddingModel string
 }
 
 // NewSourceService constructs a SourceService.
@@ -60,13 +68,21 @@ func NewSourceService(
 	reader sourcereader.Reader,
 	chunker *chunking.ChunkService,
 	bus *ProgressBus,
+	embedder embedding.Embedder,
+	vectorStore vectorstorage.Client,
+	collectionName string,
+	embeddingModel string,
 ) *SourceService {
 	return &SourceService{
-		pool:    pool,
-		store:   store,
-		reader:  reader,
-		chunker: chunker,
-		bus:     bus,
+		pool:           pool,
+		store:          store,
+		reader:         reader,
+		chunker:        chunker,
+		bus:            bus,
+		embedder:       embedder,
+		vectorStore:    vectorStore,
+		collectionName: collectionName,
+		embeddingModel: embeddingModel,
 	}
 }
 
@@ -243,8 +259,9 @@ func (s *SourceService) reingestInBackground(source model.Source) {
 	s.bus.publish(source.ID, ProgressEvent{Type: EventDone, Total: total})
 }
 
-// runPipeline reads source content and persists chunks, publishing an EventIndexing
-// event per file. Returns total chunks created.
+// runPipeline reads source content, chunks it, generates embeddings, and upserts
+// vectors into Qdrant. Publishes an EventIndexing event per file processed.
+// Returns total chunks created.
 func (s *SourceService) runPipeline(ctx context.Context, source model.Source) (int, error) {
 	requests, err := s.reader.Read(ctx, source)
 	if err != nil {
@@ -257,6 +274,21 @@ func (s *SourceService) runPipeline(ctx context.Context, source model.Source) (i
 		if err != nil {
 			return 0, fmt.Errorf("chunking %q: %w", req.FilePath, err)
 		}
+
+		if len(chunks) > 0 {
+			embChunks := toEmbeddingChunks(chunks)
+			embeddings, err := s.embedder.EmbedBatch(ctx, embChunks)
+			if err != nil {
+				return 0, fmt.Errorf("embedding chunks from %q: %w", req.FilePath, err)
+			}
+			if err := s.upsertChunkVectors(ctx, chunks, embeddings); err != nil {
+				return 0, fmt.Errorf("upserting vectors for %q: %w", req.FilePath, err)
+			}
+			if err := s.updateEmbeddingModel(ctx, chunks); err != nil {
+				return 0, fmt.Errorf("updating embedding model for %q: %w", req.FilePath, err)
+			}
+		}
+
 		s.bus.publish(source.ID, ProgressEvent{
 			Type:   EventIndexing,
 			File:   filepath.Base(req.FilePath),
@@ -265,6 +297,70 @@ func (s *SourceService) runPipeline(ctx context.Context, source model.Source) (i
 		total += len(chunks)
 	}
 	return total, nil
+}
+
+// toEmbeddingChunks converts model.Chunk slice to embedding.Chunk slice.
+func toEmbeddingChunks(chunks []model.Chunk) []embedding.Chunk {
+	out := make([]embedding.Chunk, len(chunks))
+	for i, c := range chunks {
+		out[i] = embedding.Chunk{
+			ID:     c.ID.String(),
+			Text:   c.Content,
+			Source: c.SourceID.String(),
+		}
+	}
+	return out
+}
+
+// upsertChunkVectors validates embeddings and upserts them into Qdrant with a
+// minimal payload containing only the IDs needed for workspace-scoped filtering.
+func (s *SourceService) upsertChunkVectors(ctx context.Context, chunks []model.Chunk, embeddings []embedding.Embedding) error {
+	if len(embeddings) != len(chunks) {
+		return fmt.Errorf("embedding count mismatch: got %d embeddings for %d chunks", len(embeddings), len(chunks))
+	}
+
+	points := make([]*qdrantpb.PointStruct, len(chunks))
+	for i, chunk := range chunks {
+		if len(embeddings[i].Vector) == 0 {
+			return fmt.Errorf("empty vector for chunk %s", chunk.ID)
+		}
+		if chunk.ID == uuid.Nil || chunk.WorkspaceID == uuid.Nil || chunk.SourceID == uuid.Nil {
+			return fmt.Errorf("chunk %s has zero-value UUID field", chunk.ID)
+		}
+		points[i] = &qdrantpb.PointStruct{
+			Id:      qdrantpb.NewID(chunk.ID.String()),
+			Vectors: qdrantpb.NewVectors(embeddings[i].Vector...),
+			Payload: qdrantpb.NewValueMap(map[string]any{
+				"chunk_id":     chunk.ID.String(),
+				"workspace_id": chunk.WorkspaceID.String(),
+				"source_id":    chunk.SourceID.String(),
+			}),
+		}
+	}
+
+	if _, err := s.vectorStore.Upsert(ctx, &qdrantpb.UpsertPoints{
+		CollectionName: s.collectionName,
+		Points:         points,
+	}); err != nil {
+		return fmt.Errorf("qdrant upsert: %w", err)
+	}
+	return nil
+}
+
+// updateEmbeddingModel records the model name used to generate embeddings on each chunk row.
+func (s *SourceService) updateEmbeddingModel(ctx context.Context, chunks []model.Chunk) error {
+	ids := make([]uuid.UUID, len(chunks))
+	for i, c := range chunks {
+		ids[i] = c.ID
+	}
+	_, err := s.pool.Exec(ctx,
+		`UPDATE chunks SET embedding_model = $1 WHERE id = ANY($2)`,
+		s.embeddingModel, ids,
+	)
+	if err != nil {
+		return fmt.Errorf("update embedding_model: %w", err)
+	}
+	return nil
 }
 
 // storeFile writes an uploaded file to tempDir and uploads it to object storage.

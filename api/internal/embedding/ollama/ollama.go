@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/jpgomesr/NeuralVault/internal/config"
-	"github.com/jpgomesr/NeuralVault/internal/embedding"
+	"github.com/jpgomesr/NeuralVault/internal/embedding/types"
 )
 
 // defaultHTTPTimeout bounds a single HTTP round-trip to Ollama independent of
@@ -103,9 +103,9 @@ func (c *Client) Embed(ctx context.Context, text string) ([]float32, error) {
 }
 
 // EmbedBatch returns one Embedding for each Chunk, preserving input order.
-func (c *Client) EmbedBatch(ctx context.Context, chunks []embedding.Chunk) ([]embedding.Embedding, error) {
+func (c *Client) EmbedBatch(ctx context.Context, chunks []types.Chunk) ([]types.Embedding, error) {
 	if len(chunks) == 0 {
-		return []embedding.Embedding{}, nil
+		return []types.Embedding{}, nil
 	}
 
 	texts := make([]string, len(chunks))
@@ -118,9 +118,9 @@ func (c *Client) EmbedBatch(ctx context.Context, chunks []embedding.Chunk) ([]em
 		return nil, fmt.Errorf("embedding batch of %d chunks: %w", len(chunks), err)
 	}
 
-	results := make([]embedding.Embedding, len(chunks))
+	results := make([]types.Embedding, len(chunks))
 	for i, ch := range chunks {
-		results[i] = embedding.Embedding{ChunkID: ch.ID, Vector: vectors[i]}
+		results[i] = types.Embedding{ChunkID: ch.ID, Vector: vectors[i]}
 	}
 	return results, nil
 }

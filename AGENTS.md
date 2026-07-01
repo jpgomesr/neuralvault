@@ -120,9 +120,10 @@ Table-driven tests with `t.Run`. Config tests must call `resetGlobals()` (define
   - `GET /sources/{id}/status` — SSE stream of indexing progress (heartbeat every 30s, timeout 15min)
   - `GET /sources?workspace_id=` — list sources for a workspace
   - `GET /sources/{id}/chunks` — list indexed chunks for a source
+- Embedding generation (`internal/embedding/`) — `Embedder` interface + Ollama-backed implementation (`internal/embedding/ollama/`) for `nomic-embed-text`; `embedding.NewEmbedder` factory mirrors `vectorstorage.NewClient`; shared types in `embedding/types/` break the import cycle
+- Ingestion pipeline (`internal/sources/`) — after chunking, `runPipeline` calls `EmbedBatch`, validates vectors, upserts to Qdrant (point ID = chunk UUID; payload: `chunk_id`, `workspace_id`, `source_id` only), and batch-updates `chunks.embedding_model` in Postgres
 
 ### In progress
-- Embedding generation (`internal/embedding/`) — `Embedder` interface + Ollama-backed implementation (`internal/embedding/ollama/`) for `nomic-embed-text`; not yet wired into the ingestion pipeline to persist vectors via `vectorstorage.Client`
 
 ### Not started
 - Retrieval engine

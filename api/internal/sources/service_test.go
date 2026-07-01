@@ -3,16 +3,21 @@ package sources
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
+	qdrantpb "github.com/qdrant/go-client/qdrant"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 
@@ -20,11 +25,86 @@ import (
 	"github.com/jpgomesr/NeuralVault/internal/chunking/markdown"
 	"github.com/jpgomesr/NeuralVault/internal/chunking/text"
 	"github.com/jpgomesr/NeuralVault/internal/config"
+	"github.com/jpgomesr/NeuralVault/internal/embedding"
 	"github.com/jpgomesr/NeuralVault/internal/model"
 	minioclient "github.com/jpgomesr/NeuralVault/internal/objectstorage/minio"
 	"github.com/jpgomesr/NeuralVault/internal/sourcereader"
+	"github.com/jpgomesr/NeuralVault/internal/storage"
 	pgstore "github.com/jpgomesr/NeuralVault/internal/storage/postgres"
+	"github.com/jpgomesr/NeuralVault/internal/vectorstorage"
 )
+
+// stubEmbedder returns zero-valued vectors of a fixed size.
+// It satisfies embedding.Embedder without requiring a running Ollama instance.
+type stubEmbedder struct{ dim int }
+
+func (s *stubEmbedder) Embed(_ context.Context, _ string) ([]float32, error) {
+	return make([]float32, s.dim), nil
+}
+
+func (s *stubEmbedder) EmbedBatch(_ context.Context, chunks []embedding.Chunk) ([]embedding.Embedding, error) {
+	out := make([]embedding.Embedding, len(chunks))
+	for i, c := range chunks {
+		out[i] = embedding.Embedding{ChunkID: c.ID, Vector: make([]float32, s.dim)}
+	}
+	return out, nil
+}
+
+// stubVectorStore discards all writes and returns no-op results.
+// It satisfies vectorstorage.Client without requiring a running Qdrant instance.
+type stubVectorStore struct{}
+
+func (stubVectorStore) HealthCheck(_ context.Context) (*qdrantpb.HealthCheckReply, error) {
+	return &qdrantpb.HealthCheckReply{}, nil
+}
+func (stubVectorStore) CollectionExists(_ context.Context, _ string) (bool, error) { return true, nil }
+func (stubVectorStore) CreateCollection(_ context.Context, _ *qdrantpb.CreateCollection) error {
+	return nil
+}
+func (stubVectorStore) DeleteCollection(_ context.Context, _ string) error { return nil }
+func (stubVectorStore) Upsert(_ context.Context, _ *qdrantpb.UpsertPoints) (*qdrantpb.UpdateResult, error) {
+	return &qdrantpb.UpdateResult{}, nil
+}
+func (stubVectorStore) Query(_ context.Context, _ *qdrantpb.QueryPoints) ([]*qdrantpb.ScoredPoint, error) {
+	return nil, nil
+}
+func (stubVectorStore) Delete(_ context.Context, _ *qdrantpb.DeletePoints) (*qdrantpb.UpdateResult, error) {
+	return &qdrantpb.UpdateResult{}, nil
+}
+func (stubVectorStore) Count(_ context.Context, _ *qdrantpb.CountPoints) (uint64, error) {
+	return 0, nil
+}
+func (stubVectorStore) Close() error { return nil }
+
+// failingEmbedder always returns an error from both Embed and EmbedBatch.
+type failingEmbedder struct{}
+
+func (failingEmbedder) Embed(_ context.Context, _ string) ([]float32, error) {
+	return nil, errors.New("embed failed")
+}
+func (failingEmbedder) EmbedBatch(_ context.Context, _ []embedding.Chunk) ([]embedding.Embedding, error) {
+	return nil, errors.New("embed batch failed")
+}
+
+// errorVectorStore overrides Upsert to return an error; all other methods
+// are inherited from stubVectorStore.
+type errorVectorStore struct{ stubVectorStore }
+
+func (errorVectorStore) Upsert(_ context.Context, _ *qdrantpb.UpsertPoints) (*qdrantpb.UpdateResult, error) {
+	return nil, errors.New("qdrant upsert failed")
+}
+
+// selectiveFailingPool wraps a real storage.Pool and intercepts Exec calls
+// whose SQL contains "embedding_model", returning an injected error. All other
+// methods delegate to the embedded pool unchanged.
+type selectiveFailingPool struct{ storage.Pool }
+
+func (p selectiveFailingPool) Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
+	if strings.Contains(sql, "embedding_model") {
+		return pgconn.CommandTag{}, fmt.Errorf("injected exec failure for embedding_model")
+	}
+	return p.Pool.Exec(ctx, sql, args...)
+}
 
 var (
 	sharedPool     *pgxpool.Pool
@@ -163,6 +243,10 @@ func newSvc(ctx context.Context, t *testing.T) *SourceService {
 		sourcereader.NewFileReader(),
 		chunking.NewChunkService(sharedPool, splitters),
 		NewProgressBus(),
+		&stubEmbedder{dim: 768},
+		stubVectorStore{},
+		"test",
+		"nomic-embed-text",
 	)
 }
 
@@ -369,5 +453,234 @@ func TestServiceIngest_NotFound(t *testing.T) {
 	err := svc.Ingest(ctx, uuid.New())
 	if err == nil {
 		t.Fatal("expected error for non-existent source, got nil")
+	}
+}
+
+// ── Helpers for pipeline-level tests ─────────────────────────────────────────
+
+// buildCustomSvc builds a SourceService like newSvc but accepts custom pool,
+// embedder, and vector store. The object-storage field is nil because the
+// tests below call runPipeline directly, which never touches object storage.
+// The chunking service always uses sharedPool so FK constraints are satisfied.
+func buildCustomSvc(_ context.Context, t *testing.T, pool storage.Pool, emb embedding.Embedder, vs vectorstorage.Client) *SourceService {
+	t.Helper()
+	splitters := map[chunking.ContentType]chunking.Splitter{
+		chunking.ContentTypeMarkdown:  markdown.New(),
+		chunking.ContentTypePlaintext: text.New(),
+	}
+	return NewSourceService(
+		pool,
+		nil, // objectstorage.Client — not used by runPipeline
+		sourcereader.NewFileReader(),
+		chunking.NewChunkService(sharedPool, splitters),
+		NewProgressBus(),
+		emb,
+		vs,
+		"test",
+		"nomic-embed-text",
+	)
+}
+
+// insertSrcRow inserts a source row directly (bypassing the service) so that
+// chunk FK constraints are satisfied when calling runPipeline. A cleanup
+// deletes chunks and source on test exit.
+func insertSrcRow(ctx context.Context, t *testing.T, wid uuid.UUID, tempDir string) model.Source {
+	t.Helper()
+	meta, _ := json.Marshal(model.FileSourceMetadata{RootPath: tempDir})
+	src := model.Source{
+		ID:          uuid.New(),
+		WorkspaceID: wid,
+		Name:        "pipeline-test",
+		Type:        model.SourceTypeFile,
+		URI:         fmt.Sprintf("%s/%s/", wid, uuid.New()),
+		Status:      model.SourceStatusIndexing,
+		Metadata:    json.RawMessage(meta),
+		CreatedAt:   time.Now(),
+		UpdatedAt:   time.Now(),
+	}
+	_, err := sharedPool.Exec(ctx, `
+		INSERT INTO sources (id, workspace_id, name, type, uri, status, metadata, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+		src.ID, src.WorkspaceID, src.Name, src.Type, src.URI,
+		src.Status, []byte(src.Metadata), src.CreatedAt, src.UpdatedAt,
+	)
+	if err != nil {
+		t.Fatalf("insertSrcRow: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = sharedPool.Exec(context.Background(), "DELETE FROM chunks WHERE source_id = $1", src.ID)
+		_, _ = sharedPool.Exec(context.Background(), "DELETE FROM sources WHERE id = $1", src.ID)
+	})
+	return src
+}
+
+// makeTempDirWithFile creates a t.TempDir containing one file with the given
+// name and content string.
+func makeTempDirWithFile(t *testing.T, name, content string) string {
+	t.Helper()
+	dir := t.TempDir()
+	f, err := os.Create(filepath.Join(dir, name))
+	if err != nil {
+		t.Fatalf("create temp file: %v", err)
+	}
+	defer f.Close() //nolint:errcheck
+	if _, err := fmt.Fprint(f, content); err != nil {
+		t.Fatalf("write temp file: %v", err)
+	}
+	return dir
+}
+
+// ── upsertChunkVectors direct tests ──────────────────────────────────────────
+
+func TestUpsertChunkVectors_CountMismatch(t *testing.T) {
+	ctx := context.Background()
+	svc := &SourceService{vectorStore: stubVectorStore{}, collectionName: "test"}
+
+	chunks := []model.Chunk{
+		{ID: uuid.New(), WorkspaceID: uuid.New(), SourceID: uuid.New()},
+		{ID: uuid.New(), WorkspaceID: uuid.New(), SourceID: uuid.New()},
+	}
+	embeddings := []embedding.Embedding{
+		{ChunkID: chunks[0].ID.String(), Vector: []float32{0.1}},
+	}
+
+	err := svc.upsertChunkVectors(ctx, chunks, embeddings)
+	if err == nil || !strings.Contains(err.Error(), "embedding count mismatch") {
+		t.Fatalf("expected embedding count mismatch error, got: %v", err)
+	}
+}
+
+func TestUpsertChunkVectors_EmptyVector(t *testing.T) {
+	ctx := context.Background()
+	svc := &SourceService{vectorStore: stubVectorStore{}, collectionName: "test"}
+
+	id := uuid.New()
+	chunks := []model.Chunk{
+		{ID: id, WorkspaceID: uuid.New(), SourceID: uuid.New()},
+	}
+	embeddings := []embedding.Embedding{
+		{ChunkID: id.String(), Vector: nil},
+	}
+
+	err := svc.upsertChunkVectors(ctx, chunks, embeddings)
+	if err == nil || !strings.Contains(err.Error(), "empty vector") {
+		t.Fatalf("expected empty vector error, got: %v", err)
+	}
+}
+
+func TestUpsertChunkVectors_ZeroUUID(t *testing.T) {
+	ctx := context.Background()
+	svc := &SourceService{vectorStore: stubVectorStore{}, collectionName: "test"}
+
+	chunks := []model.Chunk{
+		{ID: uuid.Nil, WorkspaceID: uuid.New(), SourceID: uuid.New()},
+	}
+	embeddings := []embedding.Embedding{
+		{ChunkID: uuid.Nil.String(), Vector: []float32{0.1, 0.2}},
+	}
+
+	err := svc.upsertChunkVectors(ctx, chunks, embeddings)
+	if err == nil || !strings.Contains(err.Error(), "zero-value UUID") {
+		t.Fatalf("expected zero-value UUID error, got: %v", err)
+	}
+}
+
+func TestUpsertChunkVectors_UpsertError(t *testing.T) {
+	ctx := context.Background()
+	svc := &SourceService{vectorStore: errorVectorStore{}, collectionName: "test"}
+
+	id := uuid.New()
+	chunks := []model.Chunk{
+		{ID: id, WorkspaceID: uuid.New(), SourceID: uuid.New()},
+	}
+	embeddings := []embedding.Embedding{
+		{ChunkID: id.String(), Vector: []float32{0.1, 0.2}},
+	}
+
+	err := svc.upsertChunkVectors(ctx, chunks, embeddings)
+	if err == nil || !strings.Contains(err.Error(), "qdrant upsert") {
+		t.Fatalf("expected qdrant upsert error, got: %v", err)
+	}
+}
+
+// ── updateEmbeddingModel direct test ─────────────────────────────────────────
+
+func TestUpdateEmbeddingModel_ExecError(t *testing.T) {
+	ctx := context.Background()
+	svc := &SourceService{
+		pool:           selectiveFailingPool{Pool: sharedPool},
+		embeddingModel: "nomic-embed-text",
+	}
+
+	chunks := []model.Chunk{{ID: uuid.New()}}
+	err := svc.updateEmbeddingModel(ctx, chunks)
+	if err == nil || !strings.Contains(err.Error(), "update embedding_model") {
+		t.Fatalf("expected update embedding_model error, got: %v", err)
+	}
+}
+
+// ── runPipeline integration tests ─────────────────────────────────────────────
+
+func TestRunPipeline_EmptyFile(t *testing.T) {
+	ctx := context.Background()
+	dir := makeTempDirWithFile(t, "empty.txt", "")
+
+	meta, _ := json.Marshal(model.FileSourceMetadata{RootPath: dir})
+	src := model.Source{
+		ID:          uuid.New(),
+		WorkspaceID: uuid.New(), // no DB record needed — 0 chunks means no FK check
+		Type:        model.SourceTypeFile,
+		Metadata:    json.RawMessage(meta),
+	}
+
+	svc := buildCustomSvc(ctx, t, sharedPool, &stubEmbedder{dim: 768}, stubVectorStore{})
+	total, err := svc.runPipeline(ctx, src)
+	if err != nil {
+		t.Fatalf("runPipeline with empty file: %v", err)
+	}
+	if total != 0 {
+		t.Errorf("expected 0 chunks for empty file, got %d", total)
+	}
+}
+
+func TestRunPipeline_EmbedBatchError(t *testing.T) {
+	ctx := context.Background()
+	wid := insertWS(ctx, t)
+	dir := makeTempDirWithFile(t, "doc.md", "# Section\nSome content here.")
+	src := insertSrcRow(ctx, t, wid, dir)
+
+	svc := buildCustomSvc(ctx, t, sharedPool, failingEmbedder{}, stubVectorStore{})
+	_, err := svc.runPipeline(ctx, src)
+	if err == nil || !strings.Contains(err.Error(), "embedding chunks from") {
+		t.Fatalf("expected embed batch error, got: %v", err)
+	}
+}
+
+func TestRunPipeline_UpsertError(t *testing.T) {
+	ctx := context.Background()
+	wid := insertWS(ctx, t)
+	dir := makeTempDirWithFile(t, "doc.md", "# Section\nSome content here.")
+	src := insertSrcRow(ctx, t, wid, dir)
+
+	svc := buildCustomSvc(ctx, t, sharedPool, &stubEmbedder{dim: 768}, errorVectorStore{})
+	_, err := svc.runPipeline(ctx, src)
+	if err == nil || !strings.Contains(err.Error(), "upserting vectors for") {
+		t.Fatalf("expected upsert error, got: %v", err)
+	}
+}
+
+func TestRunPipeline_UpdateEmbeddingModelError(t *testing.T) {
+	ctx := context.Background()
+	wid := insertWS(ctx, t)
+	dir := makeTempDirWithFile(t, "doc.md", "# Section\nSome content here.")
+	src := insertSrcRow(ctx, t, wid, dir)
+
+	// selectiveFailingPool intercepts only "UPDATE chunks SET embedding_model".
+	// The chunker uses sharedPool directly (captured at construction time)
+	// so chunk INSERTs continue to succeed.
+	svc := buildCustomSvc(ctx, t, selectiveFailingPool{Pool: sharedPool}, &stubEmbedder{dim: 768}, stubVectorStore{})
+	_, err := svc.runPipeline(ctx, src)
+	if err == nil || !strings.Contains(err.Error(), "updating embedding model for") {
+		t.Fatalf("expected updateEmbeddingModel error, got: %v", err)
 	}
 }

@@ -1,25 +1,20 @@
-// Package embedding defines the embedder interface and domain types for
-// generating semantic vector representations of text.
+// Package embedding defines the embedder interface and a factory that returns
+// the configured provider implementation.
 // No business logic should depend on a concrete embedder — only this interface.
 package embedding
 
-import "context"
+import (
+	"context"
 
-// Chunk is the atomic unit of text that gets embedded.
-// It carries the original text together with provenance metadata
-// so the retrieval layer can reconstruct the source after a vector search.
-type Chunk struct {
-	ID       string         // stable identifier used to correlate chunks with their vectors
-	Text     string         // raw text to be embedded
-	Source   string         // origin of the text (file path, URL, git ref, …)
-	Metadata map[string]any // arbitrary indexer-specific fields (page number, heading, …)
-}
+	"github.com/jpgomesr/NeuralVault/internal/config"
+	"github.com/jpgomesr/NeuralVault/internal/embedding/ollama"
+	"github.com/jpgomesr/NeuralVault/internal/embedding/types"
+)
 
-// Embedding is the vector representation produced for a Chunk.
-type Embedding struct {
-	ChunkID string    // references Chunk.ID
-	Vector  []float32 // dense vector; length is model-specific (e.g. 768 for nomic-embed-text)
-}
+// Chunk and Embedding are re-exported from the shared types package so callers
+// only need to import this package.
+type Chunk = types.Chunk
+type Embedding = types.Embedding
 
 // Embedder is the single abstraction over any embedding backend
 // (Ollama, OpenAI, Gemini, …).
@@ -35,4 +30,9 @@ type Embedder interface {
 	// Prefer this over repeated Embed calls to minimise round-trips to the provider.
 	// If chunks is empty, implementations should return an empty slice and no error.
 	EmbedBatch(ctx context.Context, chunks []Chunk) ([]Embedding, error)
+}
+
+// NewEmbedder creates and returns an Embedder backed by the configured provider.
+func NewEmbedder(ctx context.Context, cfg *config.Config) (Embedder, error) {
+	return ollama.New(ctx, cfg)
 }
