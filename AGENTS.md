@@ -121,8 +121,10 @@ Table-driven tests with `t.Run`. Config tests must call `resetGlobals()` (define
   - `GET /sources?workspace_id=` — list sources for a workspace
   - `GET /sources/{id}/chunks` — list indexed chunks for a source
 
+### In progress
+- Embedding generation (`internal/embedding/`) — `Embedder` interface + Ollama-backed implementation (`internal/embedding/ollama/`) for `nomic-embed-text`; not yet wired into the ingestion pipeline to persist vectors via `vectorstorage.Client`
+
 ### Not started
-- Embedding generation
 - Retrieval engine
 - LLM provider integration
 - Frontend
