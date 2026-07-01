@@ -16,6 +16,7 @@ Thank you for your interest in contributing. This document covers how to set up 
 - [Pull request process](#pull-request-process)
 - [Reporting bugs](#reporting-bugs)
 - [Requesting features](#requesting-features)
+- [Reporting chores and tooling work](#reporting-chores-and-tooling-work)
 
 ---
 
@@ -204,6 +205,7 @@ Branch off `main` using this naming convention:
 | Bug fix | `fix/short-description` | `fix/qdrant-timeout` |
 | Documentation | `docs/short-description` | `docs/getting-started` |
 | Refactor | `refactor/short-description` | `refactor/embedding-interface` |
+| Chore / tooling | `chore/short-description` | `chore/swagger-ci-check` |
 
 ### Running tests
 
@@ -291,6 +293,15 @@ Open an issue using the **Feature request** template. Include:
 - Any alternatives you considered
 
 Check the [roadmap](docs/roadmap.md) first — your feature may already be planned.
+
+---
+
+## Reporting chores and tooling work
+
+Open an issue using the **Chore / Tooling** template. Include:
+
+- What is missing, fragile, or manual today
+- Your proposed solution
 
 ---
 
