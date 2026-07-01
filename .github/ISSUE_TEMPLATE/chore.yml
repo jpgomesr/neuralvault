@@ -1,0 +1,37 @@
+name: Chore / Tooling
+description: Maintenance, CI, build, dependency, or internal tooling work with no user-facing behaviour change
+title: "chore: "
+labels: [chore]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template for internal work: CI pipelines, build scripts, dependency bumps, developer tooling, refactors with no behaviour change.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What is missing, fragile, or manual today?
+      placeholder: |
+        What gap or risk does this leave in the project?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed-solution
+    attributes:
+      label: Proposed solution
+      description: What should change?
+      placeholder: |
+        Concrete steps or changes to make.
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Related issues, PRs, or prior discussion.
+    validations:
+      required: false
