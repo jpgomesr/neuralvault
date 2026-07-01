@@ -1,4 +1,4 @@
-.PHONY: help run build test lint migrate migrate-up migrate-down migrate-status up down logs
+.PHONY: help run build test lint swag migrate migrate-up migrate-down migrate-status up down logs
 
 API_DIR := api
 
@@ -9,6 +9,7 @@ help:
 	@echo "  build    Compile the API binary to dist/"
 	@echo "  test     Run all Go tests with race detector"
 	@echo "  lint     Run golangci-lint on the API"
+	@echo "  swag     Regenerate Swagger docs from handler annotations"
 	@echo "  migrate-up      Apply all pending migrations"
 	@echo "  migrate-down    Roll back the last migration"
 	@echo "  migrate-status  Show migration status"
@@ -29,6 +30,9 @@ test:
 
 lint:
 	cd $(API_DIR) && golangci-lint run
+
+swag:
+	cd $(API_DIR) && go run github.com/swaggo/swag/cmd/swag@v1.16.6 init -g cmd/server/main.go
 
 migrate-up:
 	cd $(API_DIR) && go run ./cmd/migrate up
