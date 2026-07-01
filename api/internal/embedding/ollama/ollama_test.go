@@ -325,3 +325,39 @@ func TestNew_ModelNameMatchesTagSuffix(t *testing.T) {
 			"nomic-embed-text", "nomic-embed-text:latest", err)
 	}
 }
+
+// TestNew_ModelNameExactMatch covers the bare-name side of the "exact or
+// :latest-suffixed" match in ensureModelAvailable, in case a server ever
+// reports a tag with no suffix at all.
+func TestNew_ModelNameExactMatch(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/tags", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"models": []map[string]string{{"name": "nomic-embed-text"}},
+		})
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	cfg := &config.Config{Ollama: config.Ollama{URL: srv.URL, EmbeddingModel: "nomic-embed-text"}}
+	if _, err := ollama.New(context.Background(), cfg); err != nil {
+		t.Fatalf("expected New to succeed matching %q exactly, got: %v", "nomic-embed-text", err)
+	}
+}
+
+func TestNew_TagsMalformedJSON(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/tags", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte("not json"))
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	cfg := &config.Config{Ollama: config.Ollama{URL: srv.URL, EmbeddingModel: "nomic-embed-text"}}
+	_, err := ollama.New(context.Background(), cfg)
+	if err == nil || !strings.Contains(err.Error(), "decoding ollama tags response") {
+		t.Fatalf("expected decode error, got: %v", err)
+	}
+}
