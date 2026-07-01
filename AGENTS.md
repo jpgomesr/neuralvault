@@ -81,7 +81,7 @@ Both embeddings and LLM inference are pluggable by design — no provider is har
 
 **Commits:** Conventional Commits — `<type>(<scope>): <summary>` (e.g. `feat(chunking): add markdown section splitter`)
 
-**Branches:** `feat/`, `fix/`, `docs/`, `refactor/` prefixes off `main`
+**Branches:** `feat/`, `fix/`, `docs/`, `refactor/`, `chore/` prefixes off `main`
 
 **PRs:** squash merge; one concern per PR; fill the PR template and link the related issue
 
