@@ -7,7 +7,7 @@ Planned development phases for the NeuralVault platform.
 Core retrieval pipeline.
 
 - [X] Chunking engine
-- [ ] Embedding generation
+- [X] Embedding generation
 - [X] Qdrant vector storage
 - [ ] Basic chat interface
 - [ ] Ollama local model support

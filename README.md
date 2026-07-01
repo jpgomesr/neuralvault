@@ -6,7 +6,7 @@
 
 NeuralVault is an open-source AI memory and contextual retrieval platform. Instead of a chatbot that forgets everything the moment the session ends, NeuralVault indexes your knowledge sources — Obsidian vaults, Git repositories, PDFs, docs — and retrieves the most relevant context for every question you ask.
 
-> **Status:** active development — Phase 1 (Foundation). The ingestion pipeline (chunking, object storage, source endpoints) is functional. Embedding generation, retrieval engine, and frontend are not yet implemented. See the [roadmap](docs/roadmap.md) for the current state.
+> **Status:** active development — Phase 1 (Foundation). The ingestion pipeline (chunking, object storage, source endpoints, embedding generation, and Qdrant vector storage) is functional. Retrieval engine and frontend are not yet implemented. See the [roadmap](docs/roadmap.md) for the current state.
 
 ---
 
