@@ -120,9 +120,10 @@ The API will be available at `http://localhost:8080`. Swagger docs at `http://lo
 ## Roadmap
 
 - **Phase 1 — Foundation:** chunking engine, embeddings, Qdrant storage, basic chat, Ollama support
-- **Phase 2 — Retrieval quality:** hybrid search, reranking, dashboard, retrieval analytics
-- **Phase 3 — Context intelligence:** context compression, active memory, multi-source retrieval
-- **Phase 4 — Developer tooling:** VSCode extension, AI coding memory, knowledge graph
+- **Phase 2 — Retrieval quality:** hybrid search, metadata filtering, reranking, dashboard, retrieval analytics
+- **Phase 3 — Context intelligence:** context compression, active memory, multi-source retrieval, conversation memory
+- **Phase 4 — AI platform:** knowledge graph, intelligent LLM routing, agent memory, cross-workspace retrieval
+- **Phase 5 — Ecosystem & DX:** CLI, SDKs, VSCode extension, MCP server, GitHub Action, documentation
 
 See [docs/roadmap.md](docs/roadmap.md) for the full breakdown.
 

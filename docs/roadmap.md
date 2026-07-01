@@ -19,6 +19,7 @@ Core retrieval pipeline.
 Improving search accuracy and observability.
 
 - [ ] Hybrid search (semantic + keyword)
+- [ ] Metadata filtering
 - [ ] Reranking layer
 - [ ] Dashboard
 - [ ] Retrieval analytics
@@ -33,14 +34,28 @@ Smarter context management.
 - [ ] Active memory
 - [ ] Multi-source retrieval
 - [ ] Context prioritization
+- [ ] Conversation memory
 
 ---
 
-## Phase 4 — Developer Tooling
+## Phase 4 — AI Platform
 
-Extending into the development workflow.
+Making NeuralVault a complete AI memory platform.
 
-- [ ] VSCode extension
-- [ ] AI coding memory
-- [ ] Intelligent LLM routing
 - [ ] Knowledge graph
+- [ ] Intelligent LLM routing
+- [ ] Agent memory
+- [ ] Cross-workspace retrieval
+
+---
+
+## Phase 5 — Ecosystem & Developer Experience
+
+Making NeuralVault easy to integrate.
+
+- [ ] CLI
+- [ ] SDKs
+- [ ] VSCode extension
+- [ ] MCP Server
+- [ ] GitHub Action
+- [ ] Documentation
