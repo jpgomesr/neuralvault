@@ -1,4 +1,4 @@
-.PHONY: help run build test lint swag migrate migrate-up migrate-down migrate-status up down logs
+.PHONY: help run build build-cli test lint swag migrate migrate-up migrate-down migrate-status run-cli up down logs
 
 API_DIR := api
 
@@ -7,6 +7,8 @@ help:
 	@echo ""
 	@echo "  run      Start the API server (go run)"
 	@echo "  build    Compile the API binary to dist/"
+	@echo "  build-cli  Compile the CLI to dist/ as nv (falls back to dist/neuralvault if nv is already on PATH)"
+	@echo "  run-cli  Run the CLI without building (go run); pass args via ARGS='ingest README.md'"
 	@echo "  test     Run all Go tests with race detector"
 	@echo "  lint     Run golangci-lint on the API"
 	@echo "  swag     Regenerate Swagger docs from handler annotations"
@@ -24,6 +26,19 @@ run:
 build:
 	mkdir -p dist
 	cd $(API_DIR) && go build -o ../dist/neuralvault ./cmd/server
+
+build-cli:
+	mkdir -p dist
+	cd $(API_DIR) && go build -o ../dist/neuralvault-cli ./cmd/cli
+	@if command -v nv >/dev/null 2>&1; then \
+		echo "nv already exists on PATH -- skipping alias, use ./dist/neuralvault-cli (or ./dist/neuralvault)"; \
+		cp dist/neuralvault-cli dist/neuralvault; \
+	else \
+		cp dist/neuralvault-cli dist/nv; \
+	fi
+
+run-cli:
+	cd $(API_DIR) && go run ./cmd/cli $(ARGS)
 
 test:
 	cd $(API_DIR) && go test ./... -race
