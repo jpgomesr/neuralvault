@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/pressly/goose/v3"
@@ -20,6 +21,7 @@ import (
 	"github.com/jpgomesr/NeuralVault/internal/config"
 	"github.com/jpgomesr/NeuralVault/internal/embedding"
 	"github.com/jpgomesr/NeuralVault/internal/model"
+	"github.com/jpgomesr/NeuralVault/internal/storage"
 	pgstore "github.com/jpgomesr/NeuralVault/internal/storage/postgres"
 	"github.com/jpgomesr/NeuralVault/internal/vectorstorage"
 )
@@ -50,6 +52,52 @@ func (failingEmbedder) Embed(_ context.Context, _ string) ([]float32, error) {
 }
 func (failingEmbedder) EmbedBatch(_ context.Context, _ []embedding.Chunk) ([]embedding.Embedding, error) {
 	return nil, errors.New("embed batch failed")
+}
+
+// fakeVectorStore lets a test control exactly what Query returns, so branches
+// downstream of the Qdrant response (invalid point IDs, cross-workspace
+// leakage) can be exercised without depending on real Qdrant filter behavior.
+type fakeVectorStore struct {
+	queryFn func(ctx context.Context, req *qdrantpb.QueryPoints) ([]*qdrantpb.ScoredPoint, error)
+}
+
+func (f fakeVectorStore) HealthCheck(_ context.Context) (*qdrantpb.HealthCheckReply, error) {
+	return &qdrantpb.HealthCheckReply{}, nil
+}
+func (f fakeVectorStore) CollectionExists(_ context.Context, _ string) (bool, error) { return true, nil }
+func (f fakeVectorStore) CreateCollection(_ context.Context, _ *qdrantpb.CreateCollection) error {
+	return nil
+}
+func (f fakeVectorStore) DeleteCollection(_ context.Context, _ string) error { return nil }
+func (f fakeVectorStore) Upsert(_ context.Context, _ *qdrantpb.UpsertPoints) (*qdrantpb.UpdateResult, error) {
+	return &qdrantpb.UpdateResult{}, nil
+}
+func (f fakeVectorStore) Query(ctx context.Context, req *qdrantpb.QueryPoints) ([]*qdrantpb.ScoredPoint, error) {
+	return f.queryFn(ctx, req)
+}
+func (f fakeVectorStore) Delete(_ context.Context, _ *qdrantpb.DeletePoints) (*qdrantpb.UpdateResult, error) {
+	return &qdrantpb.UpdateResult{}, nil
+}
+func (f fakeVectorStore) Count(_ context.Context, _ *qdrantpb.CountPoints) (uint64, error) {
+	return 0, nil
+}
+func (f fakeVectorStore) Close() error { return nil }
+
+// scoredPointWithUUID builds a minimal ScoredPoint for a chunk UUID, as
+// returned by a real Qdrant Query call.
+func scoredPointWithUUID(id uuid.UUID, score float32) *qdrantpb.ScoredPoint {
+	return &qdrantpb.ScoredPoint{Id: qdrantpb.NewID(id.String()), Score: score}
+}
+
+// queryFailingPool wraps a real storage.Pool and forces an error on any
+// Query whose SQL targets the chunks table; all other calls delegate.
+type queryFailingPool struct{ storage.Pool }
+
+func (p queryFailingPool) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
+	if strings.Contains(sql, "FROM chunks") {
+		return nil, errors.New("injected chunks query failure")
+	}
+	return p.Pool.Query(ctx, sql, args...)
 }
 
 var (
@@ -372,5 +420,77 @@ func TestRetrieve_EmbedError(t *testing.T) {
 	_, err := svc.Retrieve(ctx, RetrieveRequest{WorkspaceID: wid, Query: "anything"})
 	if err == nil || !strings.Contains(err.Error(), "embedding query") {
 		t.Fatalf("expected embedding query error, got: %v", err)
+	}
+}
+
+func TestRetrieve_QdrantQueryError(t *testing.T) {
+	ctx := context.Background()
+	wid := insertWS(ctx, t)
+
+	vs := fakeVectorStore{queryFn: func(_ context.Context, _ *qdrantpb.QueryPoints) ([]*qdrantpb.ScoredPoint, error) {
+		return nil, errors.New("qdrant unreachable")
+	}}
+	svc := NewRetrievalService(sharedPool, fixedEmbedder{vector: vec(1.0)}, vs, sharedQdrantCfg.CollectionName)
+
+	_, err := svc.Retrieve(ctx, RetrieveRequest{WorkspaceID: wid, Query: "anything"})
+	if err == nil || !strings.Contains(err.Error(), "qdrant query") {
+		t.Fatalf("expected qdrant query error, got: %v", err)
+	}
+}
+
+func TestRetrieve_InvalidPointID(t *testing.T) {
+	ctx := context.Background()
+	wid := insertWS(ctx, t)
+
+	vs := fakeVectorStore{queryFn: func(_ context.Context, _ *qdrantpb.QueryPoints) ([]*qdrantpb.ScoredPoint, error) {
+		return []*qdrantpb.ScoredPoint{{Id: qdrantpb.NewID("not-a-uuid"), Score: 0.5}}, nil
+	}}
+	svc := NewRetrievalService(sharedPool, fixedEmbedder{vector: vec(1.0)}, vs, sharedQdrantCfg.CollectionName)
+
+	_, err := svc.Retrieve(ctx, RetrieveRequest{WorkspaceID: wid, Query: "anything"})
+	if err == nil || !strings.Contains(err.Error(), "parsing point id") {
+		t.Fatalf("expected parsing point id error, got: %v", err)
+	}
+}
+
+func TestRetrieve_LoadChunksError(t *testing.T) {
+	ctx := context.Background()
+	wid := insertWS(ctx, t)
+	sid := insertSource(ctx, t, wid)
+	chunk := insertChunk(ctx, t, wid, sid, "content", vec(1.0))
+
+	vs := fakeVectorStore{queryFn: func(_ context.Context, _ *qdrantpb.QueryPoints) ([]*qdrantpb.ScoredPoint, error) {
+		return []*qdrantpb.ScoredPoint{scoredPointWithUUID(chunk.ID, 0.9)}, nil
+	}}
+	svc := NewRetrievalService(queryFailingPool{Pool: sharedPool}, fixedEmbedder{vector: vec(1.0)}, vs, sharedQdrantCfg.CollectionName)
+
+	_, err := svc.Retrieve(ctx, RetrieveRequest{WorkspaceID: wid, Query: "anything"})
+	if err == nil || !strings.Contains(err.Error(), "loading chunks") {
+		t.Fatalf("expected loading chunks error, got: %v", err)
+	}
+}
+
+// TestRetrieve_FiltersCrossWorkspaceLeak simulates a Qdrant filter bug: Query
+// returns a point whose chunk belongs to a different workspace than the one
+// requested. The defense-in-depth check in Retrieve must drop it rather than
+// return it to the caller.
+func TestRetrieve_FiltersCrossWorkspaceLeak(t *testing.T) {
+	ctx := context.Background()
+	widA := insertWS(ctx, t)
+	widB := insertWS(ctx, t)
+	sidB := insertSource(ctx, t, widB)
+	chunkB := insertChunk(ctx, t, widB, sidB, "belongs to workspace B", vec(1.0))
+
+	vs := fakeVectorStore{queryFn: func(_ context.Context, _ *qdrantpb.QueryPoints) ([]*qdrantpb.ScoredPoint, error) {
+		return []*qdrantpb.ScoredPoint{scoredPointWithUUID(chunkB.ID, 0.9)}, nil
+	}}
+	svc := NewRetrievalService(sharedPool, fixedEmbedder{vector: vec(1.0)}, vs, sharedQdrantCfg.CollectionName)
+
+	results, err := svc.Retrieve(ctx, RetrieveRequest{WorkspaceID: widA, Query: "anything"})
+	if err != nil {
+		t.Fatalf("Retrieve: %v", err)
+	}
+	if len(results) != 0 {
+		t.Fatalf("expected leaked cross-workspace chunk to be filtered out, got %d results", len(results))
 	}
 }

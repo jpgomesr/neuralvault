@@ -6,4 +6,5 @@ ignore:
   - "api/internal/objectstorage/objectstorage.go"
   - "api/internal/router/router.go"
   - "api/internal/sources/routes.go"
+  - "api/internal/retrieval/routes.go"
   - "api/internal/embedding/embedding.go"
