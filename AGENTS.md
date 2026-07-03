@@ -126,6 +126,7 @@ Table-driven tests with `t.Run`. Config tests must call `resetGlobals()` (define
 - Embedding generation (`internal/embedding/`) — `Embedder` interface + Ollama-backed implementation (`internal/embedding/ollama/`) for `nomic-embed-text`; `embedding.NewEmbedder` factory mirrors `vectorstorage.NewClient`; shared types in `embedding/types/` break the import cycle
 - Ingestion pipeline (`internal/sources/`) — after chunking, `runPipeline` calls `EmbedBatch`, validates vectors, upserts to Qdrant (point ID = chunk UUID; payload: `chunk_id`, `workspace_id`, `source_id` only), and batch-updates `chunks.embedding_model` in Postgres
 - Retrieval engine (`internal/retrieval/`) — `Retriever` interface + `RetrievalService`; `POST /query` embeds the question, runs a workspace-filtered `Query` against Qdrant, and hydrates the top-k chunks from Postgres ordered by score (see [SPEC-006](docs/specs/SPEC-006-retrieval-engine.md))
+- CLI (`cmd/cli/`) — minimal `ingest`/`query` commands that talk to the API as a plain HTTP client (no `internal/*` imports); `make build-cli` builds `dist/nv` (falls back to `dist/neuralvault` if `nv` is already on `PATH`), `make run-cli ARGS=...` runs it via `go run`
 
 ### In progress
 
