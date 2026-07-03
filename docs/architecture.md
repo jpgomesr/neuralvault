@@ -140,3 +140,9 @@ Services deployed:
 - [ADR-001 — Why Go for the core](adr/ADR-001-core-language-decision.md)
 - [ADR-002 — Why PostgreSQL](adr/ADR-002-core-database-decision.md)
 - [ADR-003 — Why Qdrant](adr/ADR-003-core-vector-database-decision.md)
+
+---
+
+## Technical Specs
+
+Per-component technical specs (implemented and planned) live in [docs/specs/](specs/), one `SPEC-NNN` file per system area.
