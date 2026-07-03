@@ -10,6 +10,7 @@ import (
 	"github.com/jpgomesr/NeuralVault/internal/embedding"
 	"github.com/jpgomesr/NeuralVault/internal/health"
 	"github.com/jpgomesr/NeuralVault/internal/objectstorage"
+	"github.com/jpgomesr/NeuralVault/internal/retrieval"
 	"github.com/jpgomesr/NeuralVault/internal/sourcereader"
 	"github.com/jpgomesr/NeuralVault/internal/sources"
 	"github.com/jpgomesr/NeuralVault/internal/storage"
@@ -32,9 +33,13 @@ func NewRouter(cfg *config.Config, pool storage.Pool, store objectstorage.Client
 	sourceService := sources.NewSourceService(pool, store, sourcereader.NewFileReader(), chunkService, bus, embedder, vectorStore, cfg.Qdrant.CollectionName, cfg.Ollama.EmbeddingModel)
 	sourceHandler := sources.NewHandler(sourceService, bus)
 
+	retrievalService := retrieval.NewRetrievalService(pool, embedder, vectorStore, cfg.Qdrant.CollectionName)
+	retrievalHandler := retrieval.NewHandler(retrievalService)
+
 	r.Route("/", func(r chi.Router) {
 		r.Mount("/health", health.Routes(healthHandler))
 		r.Mount("/sources", sources.Routes(sourceHandler))
+		r.Mount("/query", retrieval.Routes(retrievalHandler))
 
 		// Swagger routes
 		r.Get("/swagger/*", httpSwagger.WrapHandler)
