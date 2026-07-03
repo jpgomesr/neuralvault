@@ -114,6 +114,7 @@ The API will be available at `http://localhost:8080`. Swagger docs at `http://lo
 | [Architecture](docs/architecture.md) | Technology stack, system flow diagram, infrastructure setup |
 | [Roadmap](docs/roadmap.md) | Development phases and planned features |
 | [ADR index](docs/adr/) | Architecture decision records |
+| [Spec index](docs/specs/) | Technical specs per system component |
 
 ---
 

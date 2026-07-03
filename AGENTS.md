@@ -87,10 +87,13 @@ Both embeddings and LLM inference are pluggable by design — no provider is har
 
 **ADRs:** significant technical decisions go in `docs/adr/` using the template at `docs/adr/ADR-XXX-template.md`
 
+**Specs:** technical specs live in `docs/specs/` using the template at `docs/specs/SPEC-XXX-template.md`, drafted via the `/spec` command — ADRs record decisions, specs describe components (implemented or planned)
+
 ## Constraints
 
 - Do NOT add new dependencies without explicit instruction — evaluate stdlib or existing deps first
 - Do NOT modify `docs/adr/` without being asked — ADRs are written by humans
+- Do NOT write to `docs/specs/` without confirmation — specs are drafted via `/spec` and approved by a human
 - Do NOT change `env.example` without updating this file's config table
 - Do NOT run `make swag` / `swag init` automatically — only when explicitly asked
 - Do NOT commit directly to `main`
