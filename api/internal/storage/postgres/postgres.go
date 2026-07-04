@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -30,5 +31,6 @@ func NewPool(ctx context.Context, cfg config.Config) (*pgxpool.Pool, error) {
 		return nil, fmt.Errorf("pinging postgres pool: %w", err)
 	}
 
+	slog.Info("postgres connected", "host", cfg.Postgres.Host, "database", cfg.Postgres.Name, "max_conns", poolCfg.MaxConns)
 	return pool, nil
 }

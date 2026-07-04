@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"time"
@@ -126,6 +127,8 @@ func (s *SourceService) Create(ctx context.Context, req CreateRequest, files []F
 		return nil, fmt.Errorf("inserting source: %w", err)
 	}
 
+	slog.InfoContext(ctx, "source created", "source_id", source.ID, "workspace_id", source.WorkspaceID)
+
 	go s.indexInBackground(source, tempDir)
 
 	return &source, nil
@@ -142,6 +145,8 @@ func (s *SourceService) Ingest(ctx context.Context, sourceID uuid.UUID) error {
 		return fmt.Errorf("updating source status: %w", err)
 	}
 	source.Status = model.SourceStatusIndexing
+
+	slog.InfoContext(ctx, "ingest requested", "source_id", source.ID, "workspace_id", source.WorkspaceID)
 
 	go s.reingestInBackground(*source)
 
@@ -199,14 +204,26 @@ func (s *SourceService) indexInBackground(source model.Source, tempDir string) {
 	defer cancel()
 	defer os.RemoveAll(tempDir) //nolint:errcheck
 
+	start := time.Now()
 	total, err := s.runPipeline(ctx, source)
 	if err != nil {
-		_ = s.updateStatus(ctx, source.ID, model.SourceStatusError)
+		slog.ErrorContext(ctx, "indexing failed", "err", err, "source_id", source.ID, "workspace_id", source.WorkspaceID)
+		if err := s.updateStatus(ctx, source.ID, model.SourceStatusError); err != nil {
+			slog.ErrorContext(ctx, "failed to update source status", "err", err, "source_id", source.ID)
+		}
 		s.bus.publish(source.ID, ProgressEvent{Type: EventError, Error: err.Error()})
 		return
 	}
 
-	_ = s.updateStatus(ctx, source.ID, model.SourceStatusIndexed)
+	if err := s.updateStatus(ctx, source.ID, model.SourceStatusIndexed); err != nil {
+		slog.ErrorContext(ctx, "failed to update source status", "err", err, "source_id", source.ID)
+	}
+	slog.InfoContext(ctx, "indexing completed",
+		"source_id", source.ID,
+		"workspace_id", source.WorkspaceID,
+		"chunks_total", total,
+		"duration_ms", time.Since(start).Milliseconds(),
+	)
 	s.bus.publish(source.ID, ProgressEvent{Type: EventDone, Total: total})
 }
 
@@ -216,31 +233,29 @@ func (s *SourceService) reingestInBackground(source model.Source) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 
+	start := time.Now()
+
 	if err := s.chunker.DeleteChunks(ctx, source.ID); err != nil {
-		_ = s.updateStatus(ctx, source.ID, model.SourceStatusError)
-		s.bus.publish(source.ID, ProgressEvent{Type: EventError, Error: err.Error()})
+		s.failReingest(ctx, source, err)
 		return
 	}
 
 	tempDir, err := os.MkdirTemp("", "neuralvault-*")
 	if err != nil {
-		_ = s.updateStatus(ctx, source.ID, model.SourceStatusError)
-		s.bus.publish(source.ID, ProgressEvent{Type: EventError, Error: err.Error()})
+		s.failReingest(ctx, source, err)
 		return
 	}
 	defer os.RemoveAll(tempDir) //nolint:errcheck
 
 	keys, err := s.store.ListObjects(ctx, source.URI)
 	if err != nil {
-		_ = s.updateStatus(ctx, source.ID, model.SourceStatusError)
-		s.bus.publish(source.ID, ProgressEvent{Type: EventError, Error: err.Error()})
+		s.failReingest(ctx, source, err)
 		return
 	}
 
 	for _, key := range keys {
 		if err := s.downloadToTemp(ctx, key, tempDir); err != nil {
-			_ = s.updateStatus(ctx, source.ID, model.SourceStatusError)
-			s.bus.publish(source.ID, ProgressEvent{Type: EventError, Error: err.Error()})
+			s.failReingest(ctx, source, err)
 			return
 		}
 	}
@@ -250,13 +265,30 @@ func (s *SourceService) reingestInBackground(source model.Source) {
 
 	total, err := s.runPipeline(ctx, source)
 	if err != nil {
-		_ = s.updateStatus(ctx, source.ID, model.SourceStatusError)
-		s.bus.publish(source.ID, ProgressEvent{Type: EventError, Error: err.Error()})
+		s.failReingest(ctx, source, err)
 		return
 	}
 
-	_ = s.updateStatus(ctx, source.ID, model.SourceStatusIndexed)
+	if err := s.updateStatus(ctx, source.ID, model.SourceStatusIndexed); err != nil {
+		slog.ErrorContext(ctx, "failed to update source status", "err", err, "source_id", source.ID)
+	}
+	slog.InfoContext(ctx, "reingest completed",
+		"source_id", source.ID,
+		"workspace_id", source.WorkspaceID,
+		"chunks_total", total,
+		"duration_ms", time.Since(start).Milliseconds(),
+	)
 	s.bus.publish(source.ID, ProgressEvent{Type: EventDone, Total: total})
+}
+
+// failReingest logs a reingest failure, marks the source as errored, and
+// publishes the terminal error event to any subscribed status stream.
+func (s *SourceService) failReingest(ctx context.Context, source model.Source, cause error) {
+	slog.ErrorContext(ctx, "reingest failed", "err", cause, "source_id", source.ID, "workspace_id", source.WorkspaceID)
+	if err := s.updateStatus(ctx, source.ID, model.SourceStatusError); err != nil {
+		slog.ErrorContext(ctx, "failed to update source status", "err", err, "source_id", source.ID)
+	}
+	s.bus.publish(source.ID, ProgressEvent{Type: EventError, Error: cause.Error()})
 }
 
 // runPipeline reads source content, chunks it, generates embeddings, and upserts
@@ -289,6 +321,7 @@ func (s *SourceService) runPipeline(ctx context.Context, source model.Source) (i
 			}
 		}
 
+		slog.DebugContext(ctx, "file processed", "source_id", source.ID, "file", req.FilePath, "chunks", len(chunks))
 		s.bus.publish(source.ID, ProgressEvent{
 			Type:   EventIndexing,
 			File:   filepath.Base(req.FilePath),

@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jpgomesr/NeuralVault/internal/model"
@@ -69,8 +71,10 @@ func (s *ChunkService) ChunkSource(ctx context.Context, req ChunkRequest) ([]mod
 		})
 	}
 
+	start := time.Now()
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
+		slog.ErrorContext(ctx, "chunk persist failed", "err", err, "source_id", req.SourceID)
 		return nil, fmt.Errorf("beginning transaction: %w", err)
 	}
 	defer tx.Rollback(ctx) //nolint:errcheck
@@ -84,13 +88,21 @@ func (s *ChunkService) ChunkSource(ctx context.Context, req ChunkRequest) ([]mod
 			ch.ID, ch.SourceID, ch.WorkspaceID,
 			ch.Content, ch.ChunkIndex, []byte(ch.Metadata), ch.EmbeddingModel,
 		); err != nil {
+			slog.ErrorContext(ctx, "chunk persist failed", "err", err, "source_id", req.SourceID)
 			return nil, fmt.Errorf("inserting chunk %d: %w", ch.ChunkIndex, err)
 		}
 	}
 
 	if err := tx.Commit(ctx); err != nil {
+		slog.ErrorContext(ctx, "chunk persist failed", "err", err, "source_id", req.SourceID)
 		return nil, fmt.Errorf("committing transaction: %w", err)
 	}
+
+	slog.DebugContext(ctx, "chunks persisted",
+		"source_id", req.SourceID,
+		"chunk_count", len(chunks),
+		"duration_ms", time.Since(start).Milliseconds(),
+	)
 
 	return chunks, nil
 }
@@ -133,6 +145,7 @@ func (s *ChunkService) ListChunks(ctx context.Context, sourceID uuid.UUID) ([]mo
 // DeleteChunks removes all chunks belonging to the given source.
 func (s *ChunkService) DeleteChunks(ctx context.Context, sourceID uuid.UUID) error {
 	if _, err := s.pool.Exec(ctx, `DELETE FROM chunks WHERE source_id = $1`, sourceID); err != nil {
+		slog.ErrorContext(ctx, "delete chunks failed", "err", err, "source_id", sourceID)
 		return fmt.Errorf("deleting chunks for source %s: %w", sourceID, err)
 	}
 	return nil

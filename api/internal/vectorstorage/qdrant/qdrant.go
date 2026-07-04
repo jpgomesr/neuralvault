@@ -3,6 +3,7 @@ package qdrant
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
 	"github.com/jpgomesr/NeuralVault/internal/config"
 	"github.com/qdrant/go-client/qdrant"
@@ -27,6 +28,7 @@ func NewPool(ctx context.Context, cfg *config.Config) (*qdrant.Client, error) {
 		return nil, err
 	}
 
+	slog.Info("qdrant connected", "url", cfg.Qdrant.URL, "collection", cfg.Qdrant.CollectionName)
 	return client, nil
 }
 
@@ -50,5 +52,6 @@ func ensureCollection(ctx context.Context, client *qdrant.Client, cfg *config.Co
 		return fmt.Errorf("creating qdrant collection: %w", err)
 	}
 
+	slog.Info("qdrant collection created", "collection", cfg.Qdrant.CollectionName)
 	return nil
 }
