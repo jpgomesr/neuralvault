@@ -1,55 +1,33 @@
-// Package llm defines the provider interface and domain types for LLM inference.
+// Package llm defines the provider interface and a factory that returns
+// the configured provider implementation.
 // No business logic should depend on a concrete provider — only this interface.
 package llm
 
-import "context"
+import (
+	"context"
 
-// Role identifies who authored a message in a conversation.
-type Role string
-
-const (
-	RoleSystem    Role = "system"    // instructions that frame the model's behaviour
-	RoleUser      Role = "user"      // input from the end user
-	RoleAssistant Role = "assistant" // previous model turn, used for multi-turn context
+	"github.com/jpgomesr/NeuralVault/internal/config"
+	"github.com/jpgomesr/NeuralVault/internal/llm/ollama"
+	"github.com/jpgomesr/NeuralVault/internal/llm/types"
 )
 
-// Message is a single turn in a conversation.
-type Message struct {
-	Role    Role
-	Content string
-}
+// Role, Message, CompletionRequest, CompletionResponse, Usage and StreamChunk
+// are re-exported from the shared types package so callers only need to
+// import this package.
+type (
+	Role               = types.Role
+	Message            = types.Message
+	CompletionRequest  = types.CompletionRequest
+	CompletionResponse = types.CompletionResponse
+	Usage              = types.Usage
+	StreamChunk        = types.StreamChunk
+)
 
-// CompletionRequest is the input sent to a Provider.
-type CompletionRequest struct {
-	Messages    []Message
-	Model       string
-	MaxTokens   int
-	Temperature float32
-}
-
-// CompletionResponse is the full response returned by a Provider.
-type CompletionResponse struct {
-	Content string
-	Model   string
-	Usage   Usage
-}
-
-// Usage reports token consumption for a single completion.
-type Usage struct {
-	PromptTokens     int
-	CompletionTokens int
-	TotalTokens      int
-}
-
-// StreamChunk is one incremental piece of a streamed completion.
-// Done is true on the final chunk; Content may be empty on that chunk.
-// The channel is closed after a final chunk (Done == true)
-// or after an unrecoverable streaming error is emitted.
-type StreamChunk struct {
-    Content string
-    Done    bool
-    Error   error
-}
+const (
+	RoleSystem    = types.RoleSystem    // instructions that frame the model's behaviour
+	RoleUser      = types.RoleUser      // input from the end user
+	RoleAssistant = types.RoleAssistant // previous model turn, used for multi-turn context
+)
 
 // Provider is the single abstraction over any LLM backend
 // (OpenAI, Claude, Gemini, Ollama, …).
@@ -63,4 +41,9 @@ type Provider interface {
 	// The channel is closed after the chunk with Done == true is sent.
 	// Cancelling ctx stops generation and closes the channel early.
 	Stream(ctx context.Context, req CompletionRequest) (<-chan StreamChunk, error)
+}
+
+// NewProvider creates and returns a Provider backed by the configured provider.
+func NewProvider(ctx context.Context, cfg *config.Config) (Provider, error) {
+	return ollama.New(ctx, cfg)
 }

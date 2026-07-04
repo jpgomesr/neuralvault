@@ -10,7 +10,7 @@ Core retrieval pipeline.
 - [X] Embedding generation
 - [X] Qdrant vector storage
 - [ ] Basic chat interface
-- [ ] Ollama local model support
+- [X] Ollama local model support
 
 ---
 

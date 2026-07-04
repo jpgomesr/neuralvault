@@ -13,6 +13,7 @@ Open-source AI memory platform: indexes knowledge sources (Obsidian, Git, PDFs),
 ```bash
 docker compose up -d qdrant postgres ollama minio
 ollama pull nomic-embed-text
+ollama pull llama3
 ```
 
 ### Backend (Go API)
@@ -127,9 +128,10 @@ Table-driven tests with `t.Run`. Config tests must call `resetGlobals()` (define
 - Ingestion pipeline (`internal/sources/`) — after chunking, `runPipeline` calls `EmbedBatch`, validates vectors, upserts to Qdrant (point ID = chunk UUID; payload: `chunk_id`, `workspace_id`, `source_id` only), and batch-updates `chunks.embedding_model` in Postgres
 - Retrieval engine (`internal/retrieval/`) — `Retriever` interface + `RetrievalService`; `POST /query` embeds the question, runs a workspace-filtered `Query` against Qdrant, and hydrates the top-k chunks from Postgres ordered by score (see [SPEC-006](docs/specs/SPEC-006-retrieval-engine.md))
 - CLI (`cmd/cli/`) — minimal `ingest`/`query` commands that talk to the API as a plain HTTP client (no `internal/*` imports); `make build-cli` builds `dist/nv` (falls back to `dist/neuralvault` if `nv` is already on `PATH`), `make run-cli ARGS=...` runs it via `go run`
+- LLM provider (`internal/llm/`) — `Provider` interface + Ollama-backed implementation (`internal/llm/ollama/`) for chat completion (`Complete` and `Stream`); `llm.NewProvider` factory mirrors `embedding.NewEmbedder`; shared types in `llm/types/` break the import cycle (see [SPEC-007](docs/specs/SPEC-007-llm-provider-layer.md))
 
 ### In progress
 
 ### Not started
-- LLM provider integration
+- Cloud LLM providers (OpenAI, Claude, Gemini) and a chat/SSE domain wiring `llm.Provider` into `/query`
 - Frontend

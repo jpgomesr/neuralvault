@@ -45,6 +45,7 @@ func setValidEnv(t *testing.T) {
 	t.Setenv("OLLAMA_PORT", "11434")
 	t.Setenv("OLLAMA_URL", "http://localhost:11434")
 	t.Setenv("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text")
+	t.Setenv("OLLAMA_COMPLETION_MODEL", "llama3")
 
 	t.Setenv("MINIO_ENDPOINT", "localhost:9000")
 	t.Setenv("MINIO_ACCESS_KEY", "minioadmin")
@@ -342,6 +343,9 @@ func TestLoadConfig_SuccessfulLoad(t *testing.T) {
 	if cfg.Ollama.EmbeddingModel != "nomic-embed-text" {
 		t.Fatalf("expected embedding model nomic-embed-text, got: %s", cfg.Ollama.EmbeddingModel)
 	}
+	if cfg.Ollama.CompletionModel != "llama3" {
+		t.Fatalf("expected completion model llama3, got: %s", cfg.Ollama.CompletionModel)
+	}
 
 	dsn := cfg.Postgres.DSN()
 	if !strings.Contains(dsn, "host=localhost") || !strings.Contains(dsn, "dbname=db") {
@@ -358,6 +362,14 @@ func TestLoadConfig_MissingRequiredStringFields(t *testing.T) {
 	}{
 		{name: "server env", envVar: "SERVER_ENV", fieldName: "Server.Env"},
 		{name: "postgres host", envVar: "POSTGRES_HOST", fieldName: "Postgres.Host"},
+		// NOTE: this case reliably fails on Windows. envconfig falls back to a
+		// field's bare `envconfig` tag ("USERNAME") when the prefixed key
+		// ("POSTGRES_USERNAME") is unset, and Windows always defines a
+		// built-in USERNAME env var (the logged-in account name), so the
+		// fallback resolves to a non-empty value and validation passes
+		// instead of failing. See kelseyhightower/envconfig's Process(),
+		// the `info.Alt` lookup. Not something this repo's config code
+		// causes or can special-case away.
 		{name: "postgres username", envVar: "POSTGRES_USERNAME", fieldName: "Postgres.Username"},
 		{name: "postgres password", envVar: "POSTGRES_PASSWORD", fieldName: "Postgres.Password"},
 		{name: "postgres name", envVar: "POSTGRES_NAME", fieldName: "Postgres.Name"},
@@ -366,6 +378,7 @@ func TestLoadConfig_MissingRequiredStringFields(t *testing.T) {
 		{name: "qdrant collection name", envVar: "QDRANT_COLLECTION_NAME", fieldName: "Qdrant.CollectionName"},
 		{name: "ollama url", envVar: "OLLAMA_URL", fieldName: "Ollama.URL"},
 		{name: "ollama embedding model", envVar: "OLLAMA_EMBEDDING_MODEL", fieldName: "Ollama.EmbeddingModel"},
+		{name: "ollama completion model", envVar: "OLLAMA_COMPLETION_MODEL", fieldName: "Ollama.CompletionModel"},
 		{name: "minio endpoint", envVar: "MINIO_ENDPOINT", fieldName: "MinIO.Endpoint"},
 		{name: "minio access key", envVar: "MINIO_ACCESS_KEY", fieldName: "MinIO.AccessKey"},
 		{name: "minio secret key", envVar: "MINIO_SECRET_KEY", fieldName: "MinIO.SecretKey"},
@@ -449,6 +462,7 @@ func TestLoadConfig_DotEnvLoading(t *testing.T) {
 		"OLLAMA_PORT",
 		"OLLAMA_URL",
 		"OLLAMA_EMBEDDING_MODEL",
+		"OLLAMA_COMPLETION_MODEL",
 		"MINIO_ENDPOINT",
 		"MINIO_ACCESS_KEY",
 		"MINIO_SECRET_KEY",
@@ -476,6 +490,7 @@ func TestLoadConfig_DotEnvLoading(t *testing.T) {
 		"OLLAMA_PORT=11434",
 		"OLLAMA_URL=http://localhost:11434",
 		"OLLAMA_EMBEDDING_MODEL=nomic-embed-text",
+		"OLLAMA_COMPLETION_MODEL=llama3",
 		"MINIO_ENDPOINT=localhost:9000",
 		"MINIO_ACCESS_KEY=minioadmin",
 		"MINIO_SECRET_KEY=minioadmin",
