@@ -258,7 +258,7 @@ func ndjsonHandler(lines ...string) http.HandlerFunc {
 		flusher, _ := w.(http.Flusher)
 		w.Header().Set("Content-Type", "application/x-ndjson")
 		for _, line := range lines {
-			fmt.Fprintln(w, line)
+			fmt.Fprintln(w, line) //nolint:errcheck
 			if flusher != nil {
 				flusher.Flush()
 			}
@@ -373,7 +373,7 @@ func TestStream_ContextCancelStopsGeneration(t *testing.T) {
 	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		flusher := w.(http.Flusher)
 		w.Header().Set("Content-Type", "application/x-ndjson")
-		fmt.Fprintln(w, `{"message":{"role":"assistant","content":"hel"},"done":false}`)
+		fmt.Fprintln(w, `{"message":{"role":"assistant","content":"hel"},"done":false}`) //nolint:errcheck
 		flusher.Flush()
 		select {
 		case <-block:
