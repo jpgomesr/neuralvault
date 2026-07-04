@@ -7,7 +7,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"sort"
+	"time"
 
 	"github.com/google/uuid"
 	qdrantpb "github.com/qdrant/go-client/qdrant"
@@ -78,6 +80,7 @@ func (s *RetrievalService) Retrieve(ctx context.Context, req RetrieveRequest) ([
 		return nil, fmt.Errorf("embedding query: %w", err)
 	}
 
+	start := time.Now()
 	scoredPoints, err := s.vectorStore.Query(ctx, &qdrantpb.QueryPoints{
 		CollectionName: s.collectionName,
 		Query:          qdrantpb.NewQuery(vector...),
@@ -88,9 +91,17 @@ func (s *RetrievalService) Retrieve(ctx context.Context, req RetrieveRequest) ([
 		WithPayload: qdrantpb.NewWithPayload(true),
 	})
 	if err != nil {
+		slog.ErrorContext(ctx, "qdrant query failed", "err", err, "workspace_id", req.WorkspaceID)
 		return nil, fmt.Errorf("qdrant query: %w", err)
 	}
+	slog.DebugContext(ctx, "qdrant query completed",
+		"workspace_id", req.WorkspaceID,
+		"top_k", topK,
+		"result_count", len(scoredPoints),
+		"duration_ms", time.Since(start).Milliseconds(),
+	)
 	if len(scoredPoints) == 0 {
+		slog.InfoContext(ctx, "no matches found", "workspace_id", req.WorkspaceID)
 		return []RetrievedChunk{}, nil
 	}
 
@@ -140,6 +151,7 @@ func (s *RetrievalService) loadChunks(ctx context.Context, ids []uuid.UUID) ([]m
 		ids,
 	)
 	if err != nil {
+		slog.ErrorContext(ctx, "loading chunks failed", "err", err)
 		return nil, fmt.Errorf("querying chunks: %w", err)
 	}
 	defer rows.Close()

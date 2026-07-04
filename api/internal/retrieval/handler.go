@@ -2,9 +2,11 @@ package retrieval
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 
 	"github.com/google/uuid"
+	"github.com/jpgomesr/NeuralVault/internal/logger"
 )
 
 // queryRequest is the JSON body accepted by POST /query.
@@ -42,15 +44,18 @@ func NewHandler(service Retriever) *Handler {
 func (h *Handler) Query(w http.ResponseWriter, r *http.Request) {
 	var req queryRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		slog.WarnContext(r.Context(), "invalid query request", "err", err, "request_id", logger.RequestID(r.Context()))
 		http.Error(w, "invalid request body: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 
 	if req.WorkspaceID == uuid.Nil {
+		slog.WarnContext(r.Context(), "invalid query request", "err", "workspace_id is required", "request_id", logger.RequestID(r.Context()))
 		http.Error(w, "workspace_id is required", http.StatusBadRequest)
 		return
 	}
 	if req.Question == "" {
+		slog.WarnContext(r.Context(), "invalid query request", "err", "question is required", "request_id", logger.RequestID(r.Context()))
 		http.Error(w, "question is required", http.StatusBadRequest)
 		return
 	}
@@ -61,6 +66,7 @@ func (h *Handler) Query(w http.ResponseWriter, r *http.Request) {
 		TopK:        req.TopK,
 	})
 	if err != nil {
+		slog.ErrorContext(r.Context(), "query failed", "err", err, "workspace_id", req.WorkspaceID, "request_id", logger.RequestID(r.Context()))
 		http.Error(w, "failed to run query: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -73,6 +79,12 @@ func (h *Handler) Query(w http.ResponseWriter, r *http.Request) {
 			Score:   res.Score,
 		}
 	}
+
+	slog.InfoContext(r.Context(), "query completed",
+		"workspace_id", req.WorkspaceID,
+		"request_id", logger.RequestID(r.Context()),
+		"result_count", len(items),
+	)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(queryResponse{Results: items}) //nolint:errcheck

@@ -3,12 +3,14 @@ package sources
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"path/filepath"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jpgomesr/NeuralVault/internal/logger"
 	"github.com/jpgomesr/NeuralVault/internal/model"
 )
 
@@ -28,24 +30,28 @@ func NewHandler(service Service, bus *ProgressBus) *Handler {
 // Uploads files to object storage and returns 202 immediately; indexing runs in background.
 func (h *Handler) CreateSource(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseMultipartForm(32 << 20); err != nil {
+		slog.WarnContext(r.Context(), "invalid create source request", "err", err, "request_id", logger.RequestID(r.Context()))
 		http.Error(w, "invalid multipart form: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 
 	workspaceID, err := uuid.Parse(r.FormValue("workspace_id"))
 	if err != nil {
+		slog.WarnContext(r.Context(), "invalid create source request", "err", "invalid workspace_id", "request_id", logger.RequestID(r.Context()))
 		http.Error(w, "invalid workspace_id: must be a UUID", http.StatusBadRequest)
 		return
 	}
 
 	name := r.FormValue("name")
 	if name == "" {
+		slog.WarnContext(r.Context(), "invalid create source request", "err", "name is required", "workspace_id", workspaceID, "request_id", logger.RequestID(r.Context()))
 		http.Error(w, "name is required", http.StatusBadRequest)
 		return
 	}
 
 	fhs := r.MultipartForm.File["files"]
 	if len(fhs) == 0 {
+		slog.WarnContext(r.Context(), "invalid create source request", "err", "at least one file is required", "workspace_id", workspaceID, "request_id", logger.RequestID(r.Context()))
 		http.Error(w, "at least one file is required", http.StatusBadRequest)
 		return
 	}
@@ -54,6 +60,7 @@ func (h *Handler) CreateSource(w http.ResponseWriter, r *http.Request) {
 	for _, fh := range fhs {
 		f, err := fh.Open()
 		if err != nil {
+			slog.WarnContext(r.Context(), "invalid create source request", "err", err, "workspace_id", workspaceID, "request_id", logger.RequestID(r.Context()))
 			http.Error(w, "failed to open uploaded file: "+err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -70,6 +77,7 @@ func (h *Handler) CreateSource(w http.ResponseWriter, r *http.Request) {
 		Name:        name,
 	}, uploads)
 	if err != nil {
+		slog.ErrorContext(r.Context(), "create source failed", "err", err, "workspace_id", workspaceID, "request_id", logger.RequestID(r.Context()))
 		http.Error(w, "failed to create source: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -86,12 +94,14 @@ func (h *Handler) CreateSource(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) ListSources(w http.ResponseWriter, r *http.Request) {
 	workspaceID, err := uuid.Parse(r.URL.Query().Get("workspace_id"))
 	if err != nil {
+		slog.WarnContext(r.Context(), "invalid list sources request", "err", "invalid workspace_id", "request_id", logger.RequestID(r.Context()))
 		http.Error(w, "invalid workspace_id: must be a UUID", http.StatusBadRequest)
 		return
 	}
 
 	sources, err := h.service.List(r.Context(), workspaceID)
 	if err != nil {
+		slog.ErrorContext(r.Context(), "list sources failed", "err", err, "workspace_id", workspaceID, "request_id", logger.RequestID(r.Context()))
 		http.Error(w, "failed to list sources: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -106,11 +116,13 @@ func (h *Handler) ListSources(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) IngestSource(w http.ResponseWriter, r *http.Request) {
 	sourceID, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
+		slog.WarnContext(r.Context(), "invalid ingest source request", "err", "invalid source id", "request_id", logger.RequestID(r.Context()))
 		http.Error(w, "invalid source id: must be a UUID", http.StatusBadRequest)
 		return
 	}
 
 	if err := h.service.Ingest(r.Context(), sourceID); err != nil {
+		slog.ErrorContext(r.Context(), "ingest source failed", "err", err, "source_id", sourceID, "request_id", logger.RequestID(r.Context()))
 		http.Error(w, "failed to start ingest: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -127,12 +139,14 @@ func (h *Handler) IngestSource(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) ListChunks(w http.ResponseWriter, r *http.Request) {
 	sourceID, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
+		slog.WarnContext(r.Context(), "invalid list chunks request", "err", "invalid source id", "request_id", logger.RequestID(r.Context()))
 		http.Error(w, "invalid source id: must be a UUID", http.StatusBadRequest)
 		return
 	}
 
 	chunks, err := h.service.ListChunks(r.Context(), sourceID)
 	if err != nil {
+		slog.ErrorContext(r.Context(), "list chunks failed", "err", err, "source_id", sourceID, "request_id", logger.RequestID(r.Context()))
 		http.Error(w, "failed to list chunks: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -151,6 +165,7 @@ func (h *Handler) ListChunks(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) StreamStatus(w http.ResponseWriter, r *http.Request) {
 	sourceID, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
+		slog.WarnContext(r.Context(), "invalid stream status request", "err", "invalid source id", "request_id", logger.RequestID(r.Context()))
 		http.Error(w, "invalid source id: must be a UUID", http.StatusBadRequest)
 		return
 	}

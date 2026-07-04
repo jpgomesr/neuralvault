@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/jpgomesr/NeuralVault/internal/config"
 	"github.com/jpgomesr/NeuralVault/internal/llm/types"
@@ -155,31 +156,46 @@ func decodeErrorBody(resp *http.Response) error {
 // Complete sends a blocking chat completion request and returns the full response.
 func (c *Client) Complete(ctx context.Context, req types.CompletionRequest) (types.CompletionResponse, error) {
 	model := c.model(req)
+	start := time.Now()
+
 	body, err := json.Marshal(newChatRequest(req, model, false))
 	if err != nil {
+		slog.ErrorContext(ctx, "llm completion failed", "err", err, "model", model)
 		return types.CompletionResponse{}, fmt.Errorf("marshaling ollama chat request: %w", err)
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/api/chat", bytes.NewReader(body))
 	if err != nil {
+		slog.ErrorContext(ctx, "llm completion failed", "err", err, "model", model)
 		return types.CompletionResponse{}, fmt.Errorf("building ollama chat request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
+		slog.ErrorContext(ctx, "llm completion failed", "err", err, "model", model)
 		return types.CompletionResponse{}, fmt.Errorf("calling ollama chat endpoint: %w", err)
 	}
 	defer resp.Body.Close() //nolint:errcheck
 
 	if resp.StatusCode != http.StatusOK {
-		return types.CompletionResponse{}, decodeErrorBody(resp)
+		err := decodeErrorBody(resp)
+		slog.ErrorContext(ctx, "llm completion failed", "err", err, "model", model)
+		return types.CompletionResponse{}, err
 	}
 
 	var out chatResponse
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		slog.ErrorContext(ctx, "llm completion failed", "err", err, "model", model)
 		return types.CompletionResponse{}, fmt.Errorf("decoding ollama chat response: %w", err)
 	}
+
+	slog.InfoContext(ctx, "llm completion",
+		"model", model,
+		"duration_ms", time.Since(start).Milliseconds(),
+		"prompt_tokens", out.PromptEvalCount,
+		"completion_tokens", out.EvalCount,
+	)
 
 	return types.CompletionResponse{
 		Content: out.Message.Content,
@@ -201,27 +217,34 @@ func (c *Client) Stream(ctx context.Context, req types.CompletionRequest) (<-cha
 	model := c.model(req)
 	body, err := json.Marshal(newChatRequest(req, model, true))
 	if err != nil {
+		slog.ErrorContext(ctx, "llm stream failed", "err", err, "model", model)
 		return nil, fmt.Errorf("marshaling ollama chat request: %w", err)
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/api/chat", bytes.NewReader(body))
 	if err != nil {
+		slog.ErrorContext(ctx, "llm stream failed", "err", err, "model", model)
 		return nil, fmt.Errorf("building ollama chat request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
+		slog.ErrorContext(ctx, "llm stream failed", "err", err, "model", model)
 		return nil, fmt.Errorf("calling ollama chat endpoint: %w", err)
 	}
 
 	if resp.StatusCode != http.StatusOK {
 		defer resp.Body.Close() //nolint:errcheck
-		return nil, decodeErrorBody(resp)
+		err := decodeErrorBody(resp)
+		slog.ErrorContext(ctx, "llm stream failed", "err", err, "model", model)
+		return nil, err
 	}
 
+	slog.InfoContext(ctx, "llm stream started", "model", model)
+
 	chunks := make(chan types.StreamChunk)
-	go streamChunks(resp, chunks)
+	go streamChunks(ctx, resp, chunks)
 	return chunks, nil
 }
 
@@ -229,7 +252,7 @@ func (c *Client) Stream(ctx context.Context, req types.CompletionRequest) (<-cha
 // per line while streaming — decoding each into a StreamChunk until the
 // Done chunk is sent or the body read fails (including ctx cancellation,
 // which unblocks the read via the request's context).
-func streamChunks(resp *http.Response, chunks chan<- types.StreamChunk) {
+func streamChunks(ctx context.Context, resp *http.Response, chunks chan<- types.StreamChunk) {
 	defer resp.Body.Close() //nolint:errcheck
 	defer close(chunks)
 
@@ -242,7 +265,9 @@ func streamChunks(resp *http.Response, chunks chan<- types.StreamChunk) {
 
 		var out chatResponse
 		if err := json.Unmarshal(line, &out); err != nil {
-			chunks <- types.StreamChunk{Error: fmt.Errorf("decoding ollama stream chunk: %w", err), Done: true}
+			err = fmt.Errorf("decoding ollama stream chunk: %w", err)
+			slog.ErrorContext(ctx, "llm stream failed", "err", err)
+			chunks <- types.StreamChunk{Error: err, Done: true}
 			return
 		}
 
@@ -253,6 +278,8 @@ func streamChunks(resp *http.Response, chunks chan<- types.StreamChunk) {
 	}
 
 	if err := scanner.Err(); err != nil {
-		chunks <- types.StreamChunk{Error: fmt.Errorf("reading ollama stream: %w", err), Done: true}
+		err = fmt.Errorf("reading ollama stream: %w", err)
+		slog.ErrorContext(ctx, "llm stream failed", "err", err)
+		chunks <- types.StreamChunk{Error: err, Done: true}
 	}
 }
