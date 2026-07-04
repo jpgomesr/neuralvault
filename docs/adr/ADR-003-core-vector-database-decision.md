@@ -5,7 +5,7 @@ Accepted
 
 ##### Context
 NeuralVault requires a vector database to store and retrieve semantic embeddings generated from user knowledge sources (Obsidian vaults, Git repositories, PDFs, documentation).
-The system runs on a self-hosted Proxmox infrastructure using Docker Compose, with limited resources. The backend is written in Go. The retrieval pipeline requires semantic search as its primary operation, with hybrid search (semantic + keyword) planned for Phase 2.
+The system ran on a self-hosted Proxmox infrastructure using Docker Compose, with limited resources, at the time this decision was made. **The use of Proxmox is deprecated as of [ADR-004](ADR-004-drop-proxmox-hosting.md)** — this mention is kept only as historical context for the decision below, not as a current infrastructure requirement. The backend is written in Go. The retrieval pipeline requires semantic search as its primary operation, with hybrid search (semantic + keyword) planned for Phase 2.
 Four options were evaluated:
 - **Qdrant** — purpose-built vector database, written in Rust, self-hosted, official Go client
 - **pgvector** — PostgreSQL extension for vector storage, already part of the stack
@@ -37,3 +37,4 @@ Pinecone was ruled out because it is a managed SaaS product with no self-hosting
 
 ##### Related decisions
 - ADR-002 — PostgreSQL was chosen as the primary relational database; it introduced pgvector as a future option, which this decision evaluates and defers in favor of Qdrant
+- ADR-004 — deprecates the Proxmox infrastructure mentioned as context above; the Qdrant decision itself is unaffected

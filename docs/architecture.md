@@ -117,19 +117,16 @@ Streaming Response
 
 ---
 
-## Infrastructure — Initial Setup
+## Infrastructure
 
-| Layer      | Technology     |
-| ---------- | -------------- |
-| Hypervisor | Proxmox        |
-| OS         | Ubuntu VM      |
-| Containers | Docker Compose |
+NeuralVault runs entirely via Docker Compose — the same `docker-compose.yml` is used in local dev, staging, and production, regardless of the underlying host (bare metal, VM, hypervisor, or cloud instance). There is no separate hosting layer for non-production environments; only the environment variables differ.
 
 Services deployed:
 
 - Ollama
 - Qdrant
 - PostgreSQL
+- MinIO
 - Go API
 - Next.js
 
