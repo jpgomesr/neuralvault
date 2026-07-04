@@ -3,17 +3,66 @@ package chunking_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jpgomesr/NeuralVault/internal/chunking"
 	chunkmd "github.com/jpgomesr/NeuralVault/internal/chunking/markdown"
 	"github.com/jpgomesr/NeuralVault/internal/model"
 )
+
+// fakeTx is a minimal pgx.Tx fake: it embeds a nil pgx.Tx so unimplemented
+// methods are never expected to be called by ChunkService, and overrides
+// only the methods ChunkSource actually exercises.
+type fakeTx struct {
+	pgx.Tx
+	execErr   error
+	commitErr error
+}
+
+func (t *fakeTx) Exec(_ context.Context, _ string, _ ...any) (pgconn.CommandTag, error) {
+	if t.execErr != nil {
+		return pgconn.CommandTag{}, t.execErr
+	}
+	return pgconn.CommandTag{}, nil
+}
+
+func (t *fakeTx) Commit(_ context.Context) error { return t.commitErr }
+func (t *fakeTx) Rollback(_ context.Context) error { return nil }
+
+// fakePool is a minimal storage.Pool fake used to deterministically exercise
+// ChunkService's error branches without a live Postgres instance.
+type fakePool struct {
+	beginErr  error
+	txExecErr error
+	commitErr error
+	execErr   error
+}
+
+func (p *fakePool) Exec(_ context.Context, _ string, _ ...any) (pgconn.CommandTag, error) {
+	if p.execErr != nil {
+		return pgconn.CommandTag{}, p.execErr
+	}
+	return pgconn.CommandTag{}, nil
+}
+func (p *fakePool) Query(_ context.Context, _ string, _ ...any) (pgx.Rows, error) { return nil, nil }
+func (p *fakePool) QueryRow(_ context.Context, _ string, _ ...any) pgx.Row        { return nil }
+func (p *fakePool) Begin(_ context.Context) (pgx.Tx, error) {
+	if p.beginErr != nil {
+		return nil, p.beginErr
+	}
+	return &fakeTx{execErr: p.txExecErr, commitErr: p.commitErr}, nil
+}
+func (p *fakePool) Ping(_ context.Context) error { return nil }
+func (p *fakePool) Close()                       {}
 
 // integrationPool returns a live pgxpool connection, or skips the test when
 // POSTGRES_HOST is not set (matches the pattern in storage/postgres/postgres_test.go).
@@ -207,4 +256,52 @@ func TestChunkService(t *testing.T) {
 			t.Errorf("expected 0 chunks after delete, got %d", len(remaining))
 		}
 	})
+}
+
+// TestChunkSource_Errors exercises ChunkSource's transaction-failure branches
+// using fakePool/fakeTx, so they run without a live Postgres instance.
+func TestChunkSource_Errors(t *testing.T) {
+	req := chunking.ChunkRequest{
+		SourceID:    uuid.New(),
+		WorkspaceID: uuid.New(),
+		Content:     "# Intro\nThis is the intro.",
+		ContentType: chunking.ContentTypeMarkdown,
+		FilePath:    "docs/intro.md",
+	}
+	splitters := map[chunking.ContentType]chunking.Splitter{
+		chunking.ContentTypeMarkdown: chunkmd.New(),
+	}
+
+	t.Run("begin fails", func(t *testing.T) {
+		svc := chunking.NewChunkService(&fakePool{beginErr: errors.New("begin failed")}, splitters)
+		_, err := svc.ChunkSource(context.Background(), req)
+		if err == nil || !strings.Contains(err.Error(), "beginning transaction") {
+			t.Errorf("ChunkSource() error = %v, want wrapping 'beginning transaction'", err)
+		}
+	})
+
+	t.Run("insert fails", func(t *testing.T) {
+		svc := chunking.NewChunkService(&fakePool{txExecErr: errors.New("insert failed")}, splitters)
+		_, err := svc.ChunkSource(context.Background(), req)
+		if err == nil || !strings.Contains(err.Error(), "inserting chunk") {
+			t.Errorf("ChunkSource() error = %v, want wrapping 'inserting chunk'", err)
+		}
+	})
+
+	t.Run("commit fails", func(t *testing.T) {
+		svc := chunking.NewChunkService(&fakePool{commitErr: errors.New("commit failed")}, splitters)
+		_, err := svc.ChunkSource(context.Background(), req)
+		if err == nil || !strings.Contains(err.Error(), "committing transaction") {
+			t.Errorf("ChunkSource() error = %v, want wrapping 'committing transaction'", err)
+		}
+	})
+}
+
+// TestDeleteChunks_Error exercises DeleteChunks's error branch using fakePool.
+func TestDeleteChunks_Error(t *testing.T) {
+	svc := chunking.NewChunkService(&fakePool{execErr: errors.New("delete failed")}, nil)
+	err := svc.DeleteChunks(context.Background(), uuid.New())
+	if err == nil || !strings.Contains(err.Error(), "deleting chunks") {
+		t.Errorf("DeleteChunks() error = %v, want wrapping 'deleting chunks'", err)
+	}
 }
