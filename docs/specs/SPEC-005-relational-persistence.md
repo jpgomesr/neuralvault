@@ -28,7 +28,7 @@ NeuralVault needs durable, transactional storage for everything that is not a ve
 - `docker-compose.yml` — `postgres` service
 
 ##### Open questions
-- Where should workspace-scoping be enforced as the API surface grows — per-query `WHERE workspace_id =` (current), middleware, or Postgres RLS?
+- Where should workspace-scoping be enforced as the API surface grows — per-query `WHERE workspace_id =` (current), middleware, or Postgres RLS? [SPEC-011](SPEC-011-auth-workspaces-tenant-isolation.md) proposes application-layer enforcement.
 - Does chunk `content` belong in Postgres long-term, or should very large corpora keep text only in object storage with Postgres holding offsets?
 - Cascade semantics: what happens to chunks and Qdrant points when a source or workspace is deleted? (Today only re-ingestion deletes chunks.)
 
