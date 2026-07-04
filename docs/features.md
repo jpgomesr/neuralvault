@@ -68,5 +68,3 @@ Users can add their own API keys:
 - Anthropic
 - Google Gemini
 - OpenRouter
-
-The SaaS monetizes **memory**, **retrieval**, **orchestration**, and **contextual intelligence** — not token reselling.
