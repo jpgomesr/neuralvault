@@ -51,7 +51,7 @@ func runIngest(prog string, args []string) error {
 	workspaceIDFlag := fs.String("workspace-id", "", "workspace UUID (or NEURALVAULT_WORKSPACE_ID)")
 	name := fs.String("name", "", "source name (default: file name)")
 	fs.Usage = func() {
-		fmt.Fprintf(fs.Output(), "usage: %s ingest [flags] <file>\n\n", prog)
+		fmt.Fprintf(fs.Output(), "usage: %s ingest [flags] <file>\n\n", prog) //nolint:errcheck
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {

@@ -38,7 +38,7 @@ func runQuery(prog string, args []string) error {
 	workspaceIDFlag := fs.String("workspace-id", "", "workspace UUID (or NEURALVAULT_WORKSPACE_ID)")
 	topK := fs.Int("top-k", defaultTopK, "number of results to return")
 	fs.Usage = func() {
-		fmt.Fprintf(fs.Output(), "usage: %s query [flags] \"<question>\"\n\n", prog)
+		fmt.Fprintf(fs.Output(), "usage: %s query [flags] \"<question>\"\n\n", prog) //nolint:errcheck
 		fs.PrintDefaults()
 	}
 	if err := fs.Parse(args); err != nil {
