@@ -51,6 +51,12 @@ func setValidEnv(t *testing.T) {
 	t.Setenv("MINIO_ACCESS_KEY", "minioadmin")
 	t.Setenv("MINIO_SECRET_KEY", "minioadmin")
 	t.Setenv("MINIO_BUCKET", "neuralvault")
+
+	t.Setenv("AUTH_ISSUER_URL", "http://localhost:8081/realms/neuralvault")
+	t.Setenv("AUTH_CLIENT_ID", "neuralvault")
+	t.Setenv("AUTH_CLIENT_SECRET", "test-secret")
+	t.Setenv("AUTH_REDIRECT_URL", "http://localhost:8080/auth/callback")
+	t.Setenv("AUTH_SESSION_SECRET", "test-session-secret-at-least-32-bytes")
 }
 
 // Ensures the validator is initialized once.
@@ -313,6 +319,26 @@ func TestLoadConfig_InvalidSSLMode(t *testing.T) {
 	}
 }
 
+// Ensures the session secret is rejected when shorter than the
+// minimum length required to sign the session cookie securely.
+func TestLoadConfig_ShortSessionSecret(t *testing.T) {
+	resetGlobals()
+
+	configDir := t.TempDir()
+	t.Setenv("CONFIG_DIR", configDir)
+
+	setValidEnv(t)
+	t.Setenv("AUTH_SESSION_SECRET", "too-short")
+
+	_, err := loadConfig()
+	if err == nil {
+		t.Fatalf("expected validation error, got nil")
+	}
+	if !strings.Contains(err.Error(), "Auth.SessionSecret") {
+		t.Fatalf("expected Auth.SessionSecret validation error, got: %v", err)
+	}
+}
+
 // Verifies that a valid environment produces a fully
 // populated configuration object.
 func TestLoadConfig_SuccessfulLoad(t *testing.T) {
@@ -383,6 +409,11 @@ func TestLoadConfig_MissingRequiredStringFields(t *testing.T) {
 		{name: "minio access key", envVar: "MINIO_ACCESS_KEY", fieldName: "MinIO.AccessKey"},
 		{name: "minio secret key", envVar: "MINIO_SECRET_KEY", fieldName: "MinIO.SecretKey"},
 		{name: "minio bucket", envVar: "MINIO_BUCKET", fieldName: "MinIO.Bucket"},
+		{name: "auth issuer url", envVar: "AUTH_ISSUER_URL", fieldName: "Auth.IssuerURL"},
+		{name: "auth client id", envVar: "AUTH_CLIENT_ID", fieldName: "Auth.ClientID"},
+		{name: "auth client secret", envVar: "AUTH_CLIENT_SECRET", fieldName: "Auth.ClientSecret"},
+		{name: "auth redirect url", envVar: "AUTH_REDIRECT_URL", fieldName: "Auth.RedirectURL"},
+		{name: "auth session secret", envVar: "AUTH_SESSION_SECRET", fieldName: "Auth.SessionSecret"},
 	}
 
 	for _, tc := range required {
@@ -467,6 +498,11 @@ func TestLoadConfig_DotEnvLoading(t *testing.T) {
 		"MINIO_ACCESS_KEY",
 		"MINIO_SECRET_KEY",
 		"MINIO_BUCKET",
+		"AUTH_ISSUER_URL",
+		"AUTH_CLIENT_ID",
+		"AUTH_CLIENT_SECRET",
+		"AUTH_REDIRECT_URL",
+		"AUTH_SESSION_SECRET",
 	} {
 		if err := os.Unsetenv(key); err != nil {
 			t.Fatalf("failed to unset %s: %v", key, err)
@@ -495,6 +531,11 @@ func TestLoadConfig_DotEnvLoading(t *testing.T) {
 		"MINIO_ACCESS_KEY=minioadmin",
 		"MINIO_SECRET_KEY=minioadmin",
 		"MINIO_BUCKET=neuralvault",
+		"AUTH_ISSUER_URL=http://localhost:8081/realms/neuralvault",
+		"AUTH_CLIENT_ID=neuralvault",
+		"AUTH_CLIENT_SECRET=test-secret",
+		"AUTH_REDIRECT_URL=http://localhost:8080/auth/callback",
+		"AUTH_SESSION_SECRET=test-session-secret-at-least-32-bytes",
 	}, "\n") + "\n"
 
 	envDev := "POSTGRES_PASSWORD=devpass\n"

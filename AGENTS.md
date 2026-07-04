@@ -63,6 +63,7 @@ Config is loaded once at startup via `sync.Once` and validated with `go-playgrou
 | `Qdrant` | `QDRANT_` |
 | `Ollama` | `OLLAMA_` |
 | `MinIO` | `MINIO_` |
+| `Auth` | `AUTH_` |
 
 In non-production environments, `.env` is loaded first, then `.env.<SERVER_ENV>` overrides it. In production, only system env vars are used.
 
