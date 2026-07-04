@@ -53,7 +53,7 @@ Making NeuralVault a complete AI memory platform.
 
 Making NeuralVault easy to integrate.
 
-- [ ] CLI
+- [X] CLI
 - [ ] SDKs
 - [ ] VSCode extension
 - [ ] MCP Server

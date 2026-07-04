@@ -102,6 +102,29 @@ go run ./cmd/server
 
 The API will be available at `http://localhost:8080`. Swagger docs at `http://localhost:8080/swagger/`.
 
+### Using the CLI
+
+A minimal CLI (`api/cmd/cli`) exercises the pipeline end to end as a plain HTTP client of the API above — no separate setup beyond the server already running.
+
+There's no API to create a workspace yet, so insert one directly for local testing:
+
+```bash
+docker compose exec postgres psql -U neuralvault -d neuralvault \
+  -c "INSERT INTO workspace (id, name) VALUES (gen_random_uuid(), 'local-dev') RETURNING id;"
+```
+
+Then, with `NEURALVAULT_WORKSPACE_ID` set to that UUID (or passed via `--workspace-id` on every call):
+
+```bash
+export NEURALVAULT_WORKSPACE_ID=<uuid-from-above>
+# NEURALVAULT_API_URL defaults to http://localhost:8080
+
+make run-cli ARGS='ingest README.md'
+make run-cli ARGS='query "How does PostgreSQL work?"'
+```
+
+`make build-cli` compiles a standalone binary to `dist/nv` (or `dist/neuralvault` if `nv` is already taken on your `PATH`), so you can run `./dist/nv ingest README.md` / `./dist/nv query "..."` directly.
+
 ---
 
 ## Documentation
