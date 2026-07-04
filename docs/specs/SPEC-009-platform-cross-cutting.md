@@ -30,7 +30,7 @@ Every feature domain needs the same foundations: configuration, logging, HTTP wi
 - `docker-compose.yml`, `Makefile`, `.github/workflows/ci-api.yml`, `env.example`
 
 ##### Open questions
-- Auth design: session vs. token, which identity providers `user_identity` will back, and where workspace membership is enforced (middleware vs. per-service).
+- Auth design: session vs. token, which identity providers `user_identity` will back, and where workspace membership is enforced (middleware vs. per-service) — now framed in [SPEC-011](SPEC-011-auth-workspaces-tenant-isolation.md).
 - Does `/health` grow dependency checks (Postgres/Qdrant/MinIO/Ollama reachability) for orchestration readiness probes?
 - Observability beyond logs — metrics/tracing when the retrieval path needs latency budgets (PostHog is slated for product analytics, not ops).
 

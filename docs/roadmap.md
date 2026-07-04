@@ -11,6 +11,9 @@ Core retrieval pipeline.
 - [X] Qdrant vector storage
 - [ ] Basic chat interface
 - [X] Ollama local model support
+- [ ] Auth
+- [ ] Workspace management
+- [ ] Workspace membership middleware
 
 ---
 
