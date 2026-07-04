@@ -362,6 +362,14 @@ func TestLoadConfig_MissingRequiredStringFields(t *testing.T) {
 	}{
 		{name: "server env", envVar: "SERVER_ENV", fieldName: "Server.Env"},
 		{name: "postgres host", envVar: "POSTGRES_HOST", fieldName: "Postgres.Host"},
+		// NOTE: this case reliably fails on Windows. envconfig falls back to a
+		// field's bare `envconfig` tag ("USERNAME") when the prefixed key
+		// ("POSTGRES_USERNAME") is unset, and Windows always defines a
+		// built-in USERNAME env var (the logged-in account name), so the
+		// fallback resolves to a non-empty value and validation passes
+		// instead of failing. See kelseyhightower/envconfig's Process(),
+		// the `info.Alt` lookup. Not something this repo's config code
+		// causes or can special-case away.
 		{name: "postgres username", envVar: "POSTGRES_USERNAME", fieldName: "Postgres.Username"},
 		{name: "postgres password", envVar: "POSTGRES_PASSWORD", fieldName: "Postgres.Password"},
 		{name: "postgres name", envVar: "POSTGRES_NAME", fieldName: "Postgres.Name"},
