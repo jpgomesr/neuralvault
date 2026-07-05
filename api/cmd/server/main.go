@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -62,12 +63,16 @@ func main() {
 
 	r := router.NewRouter(cfg, pgPool, minioClient, embedder, qdrantClient)
 
-	addr := ":8080"
-
-	slog.Info("server started", "addr", addr)
-
-	if err := http.ListenAndServe(addr, r); err != nil {
+	if err := startHTTPServer(cfg, r, http.ListenAndServe); err != nil {
 		slog.Error("server stopped", "error", err)
 		os.Exit(1)
 	}
+}
+
+func startHTTPServer(cfg *config.Config, handler http.Handler, listenAndServe func(string, http.Handler) error) error {
+	addr := fmt.Sprintf(":%d", cfg.Server.Port)
+
+	slog.Info("server started", "addr", addr)
+
+	return listenAndServe(addr, handler)
 }
