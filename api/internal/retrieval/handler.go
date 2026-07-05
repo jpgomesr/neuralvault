@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jpgomesr/NeuralVault/internal/logger"
+	"github.com/jpgomesr/NeuralVault/internal/workspaces"
 )
 
 // queryRequest is the JSON body accepted by POST /query.
@@ -31,11 +32,13 @@ type queryResponse struct {
 // Handler holds HTTP handler methods for the retrieval domain.
 type Handler struct {
 	service Retriever
+	members workspaces.Service
 }
 
-// NewHandler returns a Handler backed by service.
-func NewHandler(service Retriever) *Handler {
-	return &Handler{service: service}
+// NewHandler returns a Handler backed by service. members enforces that the
+// caller belongs to the queried workspace.
+func NewHandler(service Retriever, members workspaces.Service) *Handler {
+	return &Handler{service: service, members: members}
 }
 
 // Query handles POST /query.
@@ -57,6 +60,10 @@ func (h *Handler) Query(w http.ResponseWriter, r *http.Request) {
 	if req.Question == "" {
 		slog.WarnContext(r.Context(), "invalid query request", "err", "question is required", "request_id", logger.RequestID(r.Context()))
 		http.Error(w, "question is required", http.StatusBadRequest)
+		return
+	}
+
+	if !workspaces.EnsureMember(w, r, h.members, req.WorkspaceID) {
 		return
 	}
 

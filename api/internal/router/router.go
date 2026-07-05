@@ -17,6 +17,7 @@ import (
 	"github.com/jpgomesr/NeuralVault/internal/sources"
 	"github.com/jpgomesr/NeuralVault/internal/storage"
 	"github.com/jpgomesr/NeuralVault/internal/vectorstorage"
+	"github.com/jpgomesr/NeuralVault/internal/workspaces"
 	httpSwagger "github.com/swaggo/http-swagger"
 )
 
@@ -34,11 +35,14 @@ func NewRouter(cfg *config.Config, pool storage.Pool, store objectstorage.Client
 	}
 	chunkService := chunking.NewChunkService(pool, splitters)
 	bus := sources.NewProgressBus()
+	workspaceService := workspaces.NewWorkspaceService(pool)
+	workspaceHandler := workspaces.NewHandler(workspaceService)
+
 	sourceService := sources.NewSourceService(pool, store, sourcereader.NewFileReader(), chunkService, bus, embedder, vectorStore, cfg.Qdrant.CollectionName, cfg.Ollama.EmbeddingModel)
-	sourceHandler := sources.NewHandler(sourceService, bus)
+	sourceHandler := sources.NewHandler(sourceService, bus, workspaceService)
 
 	retrievalService := retrieval.NewRetrievalService(pool, embedder, vectorStore, cfg.Qdrant.CollectionName)
-	retrievalHandler := retrieval.NewHandler(retrievalService)
+	retrievalHandler := retrieval.NewHandler(retrievalService, workspaceService)
 
 	authHandler := auth.NewHandler(authService, cfg.Auth.SessionSecret, cfg.Auth.CookieSecure, cfg.Auth.PostLoginURL)
 
@@ -51,6 +55,7 @@ func NewRouter(cfg *config.Config, pool storage.Pool, store objectstorage.Client
 		// Authenticated routes: a valid session is required.
 		r.Group(func(r chi.Router) {
 			r.Use(authHandler.RequireUser)
+			r.Mount("/workspaces", workspaces.Routes(workspaceHandler))
 			r.Mount("/sources", sources.Routes(sourceHandler))
 			r.Mount("/query", retrieval.Routes(retrievalHandler))
 		})
