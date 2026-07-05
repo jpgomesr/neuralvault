@@ -87,7 +87,8 @@ git clone https://github.com/jpgomesr/neuralvault.git
 cd neuralvault
 
 # Copy and configure environment variables
-cp env.example .env
+cp .env.example .env          # Docker Compose (ports, service credentials)
+cp api/.env.example api/.env  # Go API config
 
 # Start infrastructure services
 docker compose up -d qdrant postgres ollama minio

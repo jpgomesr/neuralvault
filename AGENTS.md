@@ -45,9 +45,11 @@ npm run build                # production build
 
 ### Environment setup
 
+Two env templates: the repo root serves Docker Compose interpolation; `api/` serves the application.
+
 ```bash
-cp env.example .env
-# Edit .env with local values — see env.example for all required keys
+cp .env.example .env          # Docker Compose (ports, service credentials)
+cp api/.env.example api/.env  # Go API config (read from api/ at startup)
 ```
 
 ## Architecture
@@ -111,7 +113,7 @@ Both embeddings and LLM inference are pluggable by design — no provider is har
 - Do NOT add new dependencies without explicit instruction — evaluate stdlib or existing deps first
 - Do NOT modify `docs/adr/` without being asked — ADRs are written by humans
 - Do NOT write to `docs/specs/` without confirmation — specs are drafted via `/spec` and approved by a human
-- Do NOT change `env.example` without updating this file's config table
+- Do NOT change `api/.env.example` without updating this file's config table (the root `.env.example` holds only Docker Compose interpolation vars)
 - Do NOT run `make swag` / `swag init` automatically — only when explicitly asked
 - Do NOT commit directly to `main`
 

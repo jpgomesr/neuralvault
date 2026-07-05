@@ -48,13 +48,14 @@ ollama pull llama3
 
 ## Step 3 — Configure environment variables
 
-Copy the example environment file:
+There are two env templates — one for Docker Compose (repo root) and one for the API (`api/`):
 
 ```bash
-cp .env.example .env
+cp .env.example .env          # Docker Compose interpolation (ports, credentials)
+cp api/.env.example api/.env  # Go API configuration
 ```
 
-Open `.env` and review the defaults. For a standard local setup, no changes are required. The defaults are:
+Review the defaults in `api/.env`. For a standard local setup, no changes are required. The defaults are:
 
 ```env
 # API
