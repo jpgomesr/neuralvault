@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 
+	"github.com/jpgomesr/NeuralVault/internal/auth"
 	"github.com/jpgomesr/NeuralVault/internal/config"
 	"github.com/jpgomesr/NeuralVault/internal/embedding"
 	"github.com/jpgomesr/NeuralVault/internal/logger"
@@ -61,7 +62,13 @@ func main() {
 		os.Exit(1)
 	}
 
-	r := router.NewRouter(cfg, pgPool, minioClient, embedder, qdrantClient)
+	authService, err := auth.NewAuthService(ctx, cfg, pgPool)
+	if err != nil {
+		slog.Error("failed to initialise auth service", "err", err)
+		os.Exit(1)
+	}
+
+	r := router.NewRouter(cfg, pgPool, minioClient, embedder, qdrantClient, authService)
 
 	if err := startHTTPServer(cfg, r, http.ListenAndServe); err != nil {
 		slog.Error("server stopped", "error", err)

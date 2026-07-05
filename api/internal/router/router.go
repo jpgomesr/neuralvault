@@ -4,6 +4,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	_ "github.com/jpgomesr/NeuralVault/docs"
+	"github.com/jpgomesr/NeuralVault/internal/auth"
 	"github.com/jpgomesr/NeuralVault/internal/chunking"
 	"github.com/jpgomesr/NeuralVault/internal/chunking/markdown"
 	"github.com/jpgomesr/NeuralVault/internal/chunking/text"
@@ -19,7 +20,7 @@ import (
 	httpSwagger "github.com/swaggo/http-swagger"
 )
 
-func NewRouter(cfg *config.Config, pool storage.Pool, store objectstorage.Client, embedder embedding.Embedder, vectorStore vectorstorage.Client) *chi.Mux {
+func NewRouter(cfg *config.Config, pool storage.Pool, store objectstorage.Client, embedder embedding.Embedder, vectorStore vectorstorage.Client, authService auth.Service) *chi.Mux {
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
 	r.Use(requestLogging)
@@ -39,13 +40,20 @@ func NewRouter(cfg *config.Config, pool storage.Pool, store objectstorage.Client
 	retrievalService := retrieval.NewRetrievalService(pool, embedder, vectorStore, cfg.Qdrant.CollectionName)
 	retrievalHandler := retrieval.NewHandler(retrievalService)
 
-	r.Route("/", func(r chi.Router) {
-		r.Mount("/health", health.Routes(healthHandler))
-		r.Mount("/sources", sources.Routes(sourceHandler))
-		r.Mount("/query", retrieval.Routes(retrievalHandler))
+	authHandler := auth.NewHandler(authService, cfg.Auth.SessionSecret, cfg.Auth.CookieSecure, cfg.Auth.PostLoginURL)
 
-		// Swagger routes
+	r.Route("/", func(r chi.Router) {
+		// Public routes.
+		r.Mount("/health", health.Routes(healthHandler))
+		r.Mount("/auth", auth.Routes(authHandler))
 		r.Get("/swagger/*", httpSwagger.WrapHandler)
+
+		// Authenticated routes: a valid session is required.
+		r.Group(func(r chi.Router) {
+			r.Use(authHandler.RequireUser)
+			r.Mount("/sources", sources.Routes(sourceHandler))
+			r.Mount("/query", retrieval.Routes(retrievalHandler))
+		})
 	})
 
 	return r
