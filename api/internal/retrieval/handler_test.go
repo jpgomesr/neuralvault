@@ -28,6 +28,24 @@ type errTest string
 
 func (e errTest) Error() string { return string(e) }
 
+// fakeMembers is a test double for workspaces.Service controlling whether the
+// caller is treated as a member of the queried workspace.
+type fakeMembers struct {
+	member bool
+	err    error
+}
+
+func (f fakeMembers) Create(context.Context, uuid.UUID, string) (*model.Workspace, error) {
+	return nil, nil
+}
+func (f fakeMembers) List(context.Context, uuid.UUID) ([]model.Workspace, error) { return nil, nil }
+func (f fakeMembers) IsMember(context.Context, uuid.UUID, uuid.UUID) (bool, error) {
+	return f.member, f.err
+}
+
+// allowMembers returns a members double that treats every caller as a member.
+func allowMembers() fakeMembers { return fakeMembers{member: true} }
+
 func postQuery(body string) *http.Request {
 	return httptest.NewRequest(http.MethodPost, "/query", bytes.NewBufferString(body))
 }
@@ -38,7 +56,7 @@ func TestQuery_Success(t *testing.T) {
 	fake := &fakeRetriever{results: []RetrievedChunk{
 		{Chunk: model.Chunk{ID: chunkID, Content: "hello world"}, Score: 0.87},
 	}}
-	h := NewHandler(fake)
+	h := NewHandler(fake, allowMembers())
 
 	body := `{"workspace_id":"` + wid.String() + `","question":"how does it work?","top_k":3}`
 	w := httptest.NewRecorder()
@@ -76,8 +94,26 @@ func TestQuery_Success(t *testing.T) {
 	}
 }
 
+func TestQuery_ForbiddenWhenNotMember(t *testing.T) {
+	wid := uuid.New()
+	fake := &fakeRetriever{}
+	h := NewHandler(fake, fakeMembers{member: false})
+
+	body := `{"workspace_id":"` + wid.String() + `","question":"secret?"}`
+	w := httptest.NewRecorder()
+	h.Query(w, postQuery(body))
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d: %s", w.Code, w.Body.String())
+	}
+	// The retriever must never run for a non-member: no cross-workspace data.
+	if fake.gotReq.WorkspaceID != uuid.Nil {
+		t.Errorf("retriever was called despite forbidden access: %s", fake.gotReq.WorkspaceID)
+	}
+}
+
 func TestQuery_InvalidBody(t *testing.T) {
-	h := NewHandler(&fakeRetriever{})
+	h := NewHandler(&fakeRetriever{}, allowMembers())
 
 	w := httptest.NewRecorder()
 	h.Query(w, postQuery("not json"))
@@ -88,7 +124,7 @@ func TestQuery_InvalidBody(t *testing.T) {
 }
 
 func TestQuery_MissingWorkspaceID(t *testing.T) {
-	h := NewHandler(&fakeRetriever{})
+	h := NewHandler(&fakeRetriever{}, allowMembers())
 
 	w := httptest.NewRecorder()
 	h.Query(w, postQuery(`{"question":"hi"}`))
@@ -99,7 +135,7 @@ func TestQuery_MissingWorkspaceID(t *testing.T) {
 }
 
 func TestQuery_MissingQuestion(t *testing.T) {
-	h := NewHandler(&fakeRetriever{})
+	h := NewHandler(&fakeRetriever{}, allowMembers())
 
 	w := httptest.NewRecorder()
 	h.Query(w, postQuery(`{"workspace_id":"`+uuid.New().String()+`"}`))
@@ -110,7 +146,7 @@ func TestQuery_MissingQuestion(t *testing.T) {
 }
 
 func TestQuery_ServiceError(t *testing.T) {
-	h := NewHandler(&fakeRetriever{err: errTest("boom")})
+	h := NewHandler(&fakeRetriever{err: errTest("boom")}, allowMembers())
 
 	body := `{"workspace_id":"` + uuid.New().String() + `","question":"hi"}`
 	w := httptest.NewRecorder()
@@ -122,7 +158,7 @@ func TestQuery_ServiceError(t *testing.T) {
 }
 
 func TestQuery_EmptyResults(t *testing.T) {
-	h := NewHandler(&fakeRetriever{results: []RetrievedChunk{}})
+	h := NewHandler(&fakeRetriever{results: []RetrievedChunk{}}, allowMembers())
 
 	body := `{"workspace_id":"` + uuid.New().String() + `","question":"hi"}`
 	w := httptest.NewRecorder()
