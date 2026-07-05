@@ -21,6 +21,7 @@ type Config struct {
 	Qdrant   Qdrant   `envconfig:"QDRANT"`
 	Ollama   Ollama   `envconfig:"OLLAMA"`
 	MinIO    MinIO    `envconfig:"MINIO"`
+	Auth     Auth     `envconfig:"AUTH"`
 }
 
 // Server contains HTTP server configuration.
@@ -68,6 +69,26 @@ type MinIO struct {
 	SecretKey string `envconfig:"SECRET_KEY"  validate:"required"`
 	Bucket    string `envconfig:"BUCKET"      validate:"required"`
 	UseSSL    bool   `envconfig:"USE_SSL"`
+}
+
+// Auth contains OpenID Connect (OIDC) configuration for the authorization-code
+// login flow. The integration targets the standard OIDC discovery spec, so the
+// provider is swappable (Keycloak in dev, Google/GitHub/Auth0/… in other
+// environments) by changing these values alone — no code changes.
+type Auth struct {
+	// IssuerURL is the OIDC issuer used for discovery (e.g. a Keycloak realm URL).
+	IssuerURL string `envconfig:"ISSUER_URL" validate:"required"`
+	// ClientID and ClientSecret identify this application to the provider.
+	ClientID     string `envconfig:"CLIENT_ID" validate:"required"`
+	ClientSecret string `envconfig:"CLIENT_SECRET" validate:"required"`
+	// RedirectURL is the provider callback registered for this client.
+	RedirectURL string `envconfig:"REDIRECT_URL" validate:"required"`
+	// SessionSecret signs the stateless session cookie (HMAC-SHA256).
+	SessionSecret string `envconfig:"SESSION_SECRET" validate:"required,min=32"`
+	// CookieSecure marks the session cookie Secure; enable behind HTTPS.
+	CookieSecure bool `envconfig:"COOKIE_SECURE" default:"false"`
+	// PostLoginURL is where the browser is redirected after a successful login.
+	PostLoginURL string `envconfig:"POST_LOGIN_URL" default:"http://localhost:3000"`
 }
 
 var (
