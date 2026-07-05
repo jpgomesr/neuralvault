@@ -9,6 +9,7 @@ import (
 	"github.com/jpgomesr/NeuralVault/internal/auth"
 	"github.com/jpgomesr/NeuralVault/internal/config"
 	"github.com/jpgomesr/NeuralVault/internal/embedding"
+	"github.com/jpgomesr/NeuralVault/internal/llm"
 	"github.com/jpgomesr/NeuralVault/internal/logger"
 	"github.com/jpgomesr/NeuralVault/internal/objectstorage"
 	"github.com/jpgomesr/NeuralVault/internal/router"
@@ -61,13 +62,19 @@ func main() {
 		os.Exit(1)
 	}
 
+	llmProvider, err := llm.NewProvider(ctx, cfg)
+	if err != nil {
+		slog.Error("failed to initialise llm provider", "err", err)
+		os.Exit(1)
+	}
+
 	authService, err := auth.NewAuthService(ctx, cfg, pgPool)
 	if err != nil {
 		slog.Error("failed to initialise auth service", "err", err)
 		os.Exit(1)
 	}
 
-	r := router.NewRouter(cfg, pgPool, minioClient, embedder, qdrantClient, authService)
+	r := router.NewRouter(cfg, pgPool, minioClient, embedder, qdrantClient, llmProvider, authService)
 
 	addr := ":8080"
 

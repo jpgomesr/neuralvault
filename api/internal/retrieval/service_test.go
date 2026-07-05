@@ -294,7 +294,7 @@ func insertChunk(ctx context.Context, t *testing.T, workspaceID, sourceID uuid.U
 }
 
 func newSvc(emb embedding.Embedder) *RetrievalService {
-	return NewRetrievalService(sharedPool, emb, sharedVecStore, sharedQdrantCfg.CollectionName)
+	return NewRetrievalService(sharedPool, emb, sharedVecStore, nil, sharedQdrantCfg.CollectionName, "")
 }
 
 // vec returns a fixed one-hot vector, used where only vector identity (not
@@ -430,7 +430,7 @@ func TestRetrieve_QdrantQueryError(t *testing.T) {
 	vs := fakeVectorStore{queryFn: func(_ context.Context, _ *qdrantpb.QueryPoints) ([]*qdrantpb.ScoredPoint, error) {
 		return nil, errors.New("qdrant unreachable")
 	}}
-	svc := NewRetrievalService(sharedPool, fixedEmbedder{vector: vec(1.0)}, vs, sharedQdrantCfg.CollectionName)
+	svc := NewRetrievalService(sharedPool, fixedEmbedder{vector: vec(1.0)}, vs, nil, sharedQdrantCfg.CollectionName, "")
 
 	_, err := svc.Retrieve(ctx, RetrieveRequest{WorkspaceID: wid, Query: "anything"})
 	if err == nil || !strings.Contains(err.Error(), "qdrant query") {
@@ -445,7 +445,7 @@ func TestRetrieve_InvalidPointID(t *testing.T) {
 	vs := fakeVectorStore{queryFn: func(_ context.Context, _ *qdrantpb.QueryPoints) ([]*qdrantpb.ScoredPoint, error) {
 		return []*qdrantpb.ScoredPoint{{Id: qdrantpb.NewID("not-a-uuid"), Score: 0.5}}, nil
 	}}
-	svc := NewRetrievalService(sharedPool, fixedEmbedder{vector: vec(1.0)}, vs, sharedQdrantCfg.CollectionName)
+	svc := NewRetrievalService(sharedPool, fixedEmbedder{vector: vec(1.0)}, vs, nil, sharedQdrantCfg.CollectionName, "")
 
 	_, err := svc.Retrieve(ctx, RetrieveRequest{WorkspaceID: wid, Query: "anything"})
 	if err == nil || !strings.Contains(err.Error(), "parsing point id") {
@@ -462,7 +462,7 @@ func TestRetrieve_LoadChunksError(t *testing.T) {
 	vs := fakeVectorStore{queryFn: func(_ context.Context, _ *qdrantpb.QueryPoints) ([]*qdrantpb.ScoredPoint, error) {
 		return []*qdrantpb.ScoredPoint{scoredPointWithUUID(chunk.ID, 0.9)}, nil
 	}}
-	svc := NewRetrievalService(queryFailingPool{Pool: sharedPool}, fixedEmbedder{vector: vec(1.0)}, vs, sharedQdrantCfg.CollectionName)
+	svc := NewRetrievalService(queryFailingPool{Pool: sharedPool}, fixedEmbedder{vector: vec(1.0)}, vs, nil, sharedQdrantCfg.CollectionName, "")
 
 	_, err := svc.Retrieve(ctx, RetrieveRequest{WorkspaceID: wid, Query: "anything"})
 	if err == nil || !strings.Contains(err.Error(), "loading chunks") {
@@ -484,7 +484,7 @@ func TestRetrieve_FiltersCrossWorkspaceLeak(t *testing.T) {
 	vs := fakeVectorStore{queryFn: func(_ context.Context, _ *qdrantpb.QueryPoints) ([]*qdrantpb.ScoredPoint, error) {
 		return []*qdrantpb.ScoredPoint{scoredPointWithUUID(chunkB.ID, 0.9)}, nil
 	}}
-	svc := NewRetrievalService(sharedPool, fixedEmbedder{vector: vec(1.0)}, vs, sharedQdrantCfg.CollectionName)
+	svc := NewRetrievalService(sharedPool, fixedEmbedder{vector: vec(1.0)}, vs, nil, sharedQdrantCfg.CollectionName, "")
 
 	results, err := svc.Retrieve(ctx, RetrieveRequest{WorkspaceID: widA, Query: "anything"})
 	if err != nil {
