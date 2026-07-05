@@ -28,6 +28,21 @@ go build ./cmd/server        # build
 golangci-lint run            # lint
 ```
 
+### Frontend (web)
+
+Thin Next.js (App Router, TypeScript) client. Requires the API running (proxied via `/api/*`). Sign in with the bundled Keycloak dev user `dev` / `dev`.
+
+```bash
+cd web
+npm install
+npm run dev                  # http://localhost:3000
+npm run lint                 # next lint
+npm run type-check           # tsc --noEmit
+npm run build                # production build
+```
+
+`next.config.mjs` rewrites `/api/*` to the API (`API_BASE_URL`, default `http://localhost:8080`) so browser and API share an origin — the session cookie is first-party and no CORS is needed.
+
 ### Environment setup
 
 ```bash
