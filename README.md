@@ -6,7 +6,7 @@
 
 NeuralVault is an open-source AI memory and contextual retrieval platform. Instead of a chatbot that forgets everything the moment the session ends, NeuralVault indexes your knowledge sources — Obsidian vaults, Git repositories, PDFs, docs — and retrieves the most relevant context for every question you ask.
 
-> **Status:** active development — Phase 1 (Foundation). The ingestion pipeline (chunking, object storage, source endpoints, embedding generation, and Qdrant vector storage) is functional. Retrieval engine and frontend are not yet implemented. See the [roadmap](docs/roadmap.md) for the current state.
+> **Status:** active development — Phase 1 (Foundation) complete. Ingestion pipeline, retrieval engine with streaming grounded answers, OIDC authentication with workspace-scoped tenant isolation, and the Next.js chat UI are all functional. See the [roadmap](docs/roadmap.md) for what's next.
 
 ---
 
@@ -20,15 +20,17 @@ NeuralVault connects to your knowledge sources, creates semantic embeddings, and
 
 ---
 
-## Planned features
+## Features
 
 - **Semantic search** — retrieves by meaning, not exact keywords
-- **AI memory** — projects, docs, ADRs, notes, and past fixes persist across sessions
-- **Multi-source context** — Obsidian vaults, Git repos, PDFs, and local files in a single session
-- **Context optimization** — filters irrelevant chunks, compresses context, reduces token usage
-- **Multi-model support** — OpenAI, Claude, Gemini, Ollama (local), Qwen, DeepSeek
-- **BYOK** — bring your own API keys; NeuralVault does not resell tokens
-- **Fully self-hosted** — runs on Docker Compose, no external services required
+- **AI memory** — indexed knowledge persists across sessions in the vector database
+- **Workspaces** — isolated, membership-guarded knowledge bases per team or project
+- **Streaming answers** — grounded responses stream back with the source chunks used
+- **Fully self-hosted** — infrastructure on Docker Compose, no external services required
+- **Multi-source context** _(planned)_ — Obsidian vaults, Git repos, PDFs, and local files in a single session
+- **Context optimization** _(planned)_ — filters irrelevant chunks, compresses context, reduces token usage
+- **Multi-model support** — Ollama (local) today; OpenAI, Claude, Gemini, Qwen, DeepSeek _(planned)_
+- **BYOK** _(planned)_ — bring your own API keys; NeuralVault does not resell tokens
 
 ---
 
@@ -56,10 +58,12 @@ Streaming response
 
 | Layer      | Technology              |
 | ---------- | ----------------------- |
-| Frontend   | Next.js _(planned)_     |
+| Frontend   | Next.js (App Router)    |
 | Backend    | Go + Chi                |
 | Vector DB  | Qdrant                  |
 | Database   | PostgreSQL              |
+| Object storage | MinIO               |
+| Auth       | OIDC (Keycloak in dev)  |
 | Local AI   | Ollama                  |
 | Embeddings | nomic-embed-text        |
 | Streaming  | HTTP Streaming / SSE    |
@@ -73,58 +77,40 @@ For the full folder structure see [CONTRIBUTING.md](CONTRIBUTING.md#project-stru
 
 - [Docker](https://docs.docker.com/get-docker/) and Docker Compose
 - [Ollama](https://ollama.com/) (for local embeddings and models)
-- Go 1.26+ (for local backend development)
+- Go 1.26+ (backend)
+- Node.js 20+ (frontend)
 
 ---
 
 ## Running locally
 
-The API and its dependencies (Qdrant, PostgreSQL, MinIO, Ollama) can be started with Docker Compose. The frontend does not exist yet.
+Infrastructure (Postgres, Qdrant, Ollama, MinIO, Keycloak) runs in Docker Compose; the API and frontend run on your host. Full walkthrough in [getting-started.md](getting-started.md) — short version:
 
 ```bash
-# Clone the repository
 git clone https://github.com/jpgomesr/neuralvault.git
 cd neuralvault
 
-# Copy and configure environment variables
+# Environment templates (defaults work as-is)
 cp .env.example .env          # Docker Compose (ports, service credentials)
 cp api/.env.example api/.env  # Go API config
 
-# Start infrastructure services
-docker compose up -d qdrant postgres ollama minio
-
-# Pull the embedding model
+# Infrastructure + embedding model
+docker compose up -d
 ollama pull nomic-embed-text
 
-# Run the API
-cd api
-go run ./cmd/server
+# Migrations, API, frontend
+make migrate-up
+make run                              # API at :8080 (Swagger at /swagger/)
+cd web && npm install && npm run dev  # UI at :3000
 ```
 
-The API will be available at `http://localhost:8080`. Swagger docs at `http://localhost:8080/swagger/`.
+Open [http://localhost:3000](http://localhost:3000) and sign in via the bundled Keycloak dev realm (user `dev`, password `dev`).
 
 ### Using the CLI
 
-A minimal CLI (`api/cmd/cli`) exercises the pipeline end to end as a plain HTTP client of the API above — no separate setup beyond the server already running.
+A minimal CLI (`api/cmd/cli`) exercises ingest and query as a plain HTTP client of the API (`make run-cli ARGS='...'`, or `make build-cli` for a standalone `dist/nv` binary).
 
-There's no API to create a workspace yet, so insert one directly for local testing:
-
-```bash
-docker compose exec postgres psql -U neuralvault -d neuralvault \
-  -c "INSERT INTO workspace (id, name) VALUES (gen_random_uuid(), 'local-dev') RETURNING id;"
-```
-
-Then, with `NEURALVAULT_WORKSPACE_ID` set to that UUID (or passed via `--workspace-id` on every call):
-
-```bash
-export NEURALVAULT_WORKSPACE_ID=<uuid-from-above>
-# NEURALVAULT_API_URL defaults to http://localhost:8080
-
-make run-cli ARGS='ingest README.md'
-make run-cli ARGS='query "How does PostgreSQL work?"'
-```
-
-`make build-cli` compiles a standalone binary to `dist/nv` (or `dist/neuralvault` if `nv` is already taken on your `PATH`), so you can run `./dist/nv ingest README.md` / `./dist/nv query "..."` directly.
+> **Note:** the CLI predates authentication. `/sources` and `/query` now require a session cookie, and the CLI has no login flow yet — how the CLI authenticates is an open question in [SPEC-011](docs/specs/SPEC-011-auth-workspaces-tenant-isolation.md), so it is currently not usable against a default setup.
 
 ---
 
@@ -144,7 +130,7 @@ make run-cli ARGS='query "How does PostgreSQL work?"'
 
 ## Roadmap
 
-- **Phase 1 — Foundation:** chunking engine, embeddings, Qdrant storage, basic chat, Ollama support
+- **Phase 1 — Foundation** _(complete)_**:** chunking engine, embeddings, Qdrant storage, auth + workspaces, chat interface, Ollama support
 - **Phase 2 — Retrieval quality:** hybrid search, metadata filtering, reranking, dashboard, retrieval analytics
 - **Phase 3 — Context intelligence:** context compression, active memory, multi-source retrieval, conversation memory
 - **Phase 4 — AI platform:** knowledge graph, intelligent LLM routing, agent memory, cross-workspace retrieval
