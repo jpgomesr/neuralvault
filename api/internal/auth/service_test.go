@@ -3,6 +3,8 @@ package auth
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -204,4 +206,47 @@ func TestAuthCodeURL(t *testing.T) {
 			t.Fatalf("AuthCodeURL = %q, expected it to contain %q", got, want)
 		}
 	}
+}
+
+func TestHealthCheck(t *testing.T) {
+	const wellKnown = "/.well-known/openid-configuration"
+
+	t.Run("reachable provider is healthy", func(t *testing.T) {
+		var gotPath string
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			gotPath = r.URL.Path
+			w.WriteHeader(http.StatusOK)
+		}))
+		defer srv.Close()
+
+		s := &AuthService{provider: srv.URL, httpClient: srv.Client()}
+		if err := s.HealthCheck(context.Background()); err != nil {
+			t.Fatalf("HealthCheck: %v", err)
+		}
+		if gotPath != wellKnown {
+			t.Errorf("requested path = %q, want %q", gotPath, wellKnown)
+		}
+	})
+
+	t.Run("5xx from provider is unhealthy", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusInternalServerError)
+		}))
+		defer srv.Close()
+
+		s := &AuthService{provider: srv.URL, httpClient: srv.Client()}
+		if err := s.HealthCheck(context.Background()); err == nil {
+			t.Fatal("expected an error when the provider returns 500")
+		}
+	})
+
+	t.Run("unreachable provider is unhealthy", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {}))
+		s := &AuthService{provider: srv.URL, httpClient: srv.Client()}
+		srv.Close() // now refuses connections
+
+		if err := s.HealthCheck(context.Background()); err == nil {
+			t.Fatal("expected an error when the provider is unreachable")
+		}
+	})
 }

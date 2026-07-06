@@ -1,4 +1,14 @@
 basePath: /
+definitions:
+  health.Report:
+    properties:
+      services:
+        additionalProperties:
+          type: string
+        type: object
+      status:
+        type: string
+    type: object
 info:
   contact: {}
   description: API for NeuralVault
@@ -69,10 +79,20 @@ paths:
       - auth
   /health:
     get:
-      description: Returns all health status of all connections
+      description: Probes every infrastructure dependency (Postgres, Qdrant, MinIO,
+        Keycloak, Ollama) and reports each one. Returns 200 when all are healthy and
+        503 when any is down.
+      produces:
+      - application/json
       responses:
         "200":
-          description: OK
+          description: All dependencies healthy
+          schema:
+            $ref: '#/definitions/health.Report'
+        "503":
+          description: One or more dependencies are down
+          schema:
+            $ref: '#/definitions/health.Report'
       summary: Get all health status
       tags:
       - health

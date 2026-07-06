@@ -92,6 +92,33 @@ func TestEmbed_RequestBody(t *testing.T) {
 	}
 }
 
+func TestHealthCheck_Reachable(t *testing.T) {
+	// newTestClient already serves a valid /api/tags response, so the server is
+	// reachable and HealthCheck should succeed.
+	client := newTestClient(t, func(http.ResponseWriter, *http.Request) {})
+
+	if err := client.HealthCheck(context.Background()); err != nil {
+		t.Fatalf("HealthCheck: %v", err)
+	}
+}
+
+func TestHealthCheck_Unreachable(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/tags", validTagsHandler)
+	srv := httptest.NewServer(mux)
+
+	cfg := &config.Config{Ollama: config.Ollama{URL: srv.URL, EmbeddingModel: "nomic-embed-text"}}
+	client, err := ollama.New(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("ollama.New: %v", err)
+	}
+	srv.Close() // server now refuses connections
+
+	if err := client.HealthCheck(context.Background()); err == nil {
+		t.Fatal("expected an error when the Ollama server is unreachable")
+	}
+}
+
 func TestEmbedBatch_Success(t *testing.T) {
 	client := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

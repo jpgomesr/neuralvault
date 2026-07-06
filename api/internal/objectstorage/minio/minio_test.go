@@ -118,6 +118,16 @@ func TestNewClient_Factory(t *testing.T) {
 	}
 }
 
+func TestClient_HealthCheck(t *testing.T) {
+	c, err := localminio.New(context.Background(), sharedCfg)
+	if err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	if err := c.HealthCheck(context.Background()); err != nil {
+		t.Fatalf("HealthCheck: %v", err)
+	}
+}
+
 func TestClient_UploadDownloadDelete(t *testing.T) {
 	c, err := localminio.New(context.Background(), sharedCfg)
 	if err != nil {

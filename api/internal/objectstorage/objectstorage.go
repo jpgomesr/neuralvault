@@ -17,6 +17,9 @@ type Client interface {
 	// ListObjects returns the keys of all objects whose key starts with prefix.
 	ListObjects(ctx context.Context, prefix string) ([]string, error)
 	Delete(ctx context.Context, key string) error
+	// HealthCheck verifies the object store is reachable and the configured
+	// bucket is accessible with the current credentials.
+	HealthCheck(ctx context.Context) error
 }
 
 // NewClient returns a MinIO-backed Client configured from cfg.
