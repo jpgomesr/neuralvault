@@ -17,7 +17,7 @@ Every feature domain needs the same foundations: configuration, logging, HTTP wi
 - The frontend (`web/`, Next.js) — planned, not yet in the repository.
 
 ##### Proposed design
-- **Config** (`api/internal/config/`): loaded once via `sync.Once`, validated with `go-playground/validator`; `kelseyhightower/envconfig` maps `<PREFIX>_<FIELD>` env vars to structs — `SERVER_`, `POSTGRES_`, `QDRANT_`, `OLLAMA_`, `MINIO_`. In non-production, `.env` then `.env.<SERVER_ENV>` are loaded; production uses system env only. The prefix table is mirrored in AGENTS.md and `env.example` (kept in sync by convention).
+- **Config** (`api/internal/config/`): loaded once via `sync.Once`, validated with `go-playground/validator`; `kelseyhightower/envconfig` maps `<PREFIX>_<FIELD>` env vars to structs — `SERVER_`, `POSTGRES_`, `QDRANT_`, `OLLAMA_`, `MINIO_`, `AUTH_`. In non-production, `.env` then `.env.<SERVER_ENV>` are loaded from the working directory (`api/`); production uses system env only. The prefix table is mirrored in AGENTS.md and `api/.env.example` (kept in sync by convention); the root `.env.example` holds only the vars Docker Compose interpolates.
 - **Logging** (`api/internal/logger/`): global `log/slog` JSON logger to stdout, initialised once in `cmd/server/main.go` via `logger.Init(level)`.
 - **Router** (`api/internal/router/router.go`): the composition root — instantiates pools/clients/services (Postgres, Qdrant, MinIO, embedder, splitters), then mounts each domain with `r.Mount("/<path>", domain.Routes(handler))`. New domains follow the three-file pattern (`handler.go`, `service.go`, `routes.go`).
 - **Health** (`api/internal/health/`): system status endpoint at `/health`.
@@ -27,7 +27,7 @@ Every feature domain needs the same foundations: configuration, logging, HTTP wi
 ##### Affected components
 - `api/internal/config/`, `api/internal/logger/`, `api/internal/router/`, `api/internal/health/`
 - `api/cmd/server/`, `api/cmd/migrate/`
-- `docker-compose.yml`, `Makefile`, `.github/workflows/ci-api.yml`, `env.example`
+- `docker-compose.yml`, `Makefile`, `.github/workflows/ci-api.yml`, `.env.example` (Docker Compose), `api/.env.example` (application config)
 
 ##### Open questions
 - Auth design: session vs. token, which identity providers `user_identity` will back, and where workspace membership is enforced (middleware vs. per-service) — now framed in [SPEC-011](SPEC-011-auth-workspaces-tenant-isolation.md).

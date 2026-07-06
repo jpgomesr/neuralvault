@@ -78,10 +78,11 @@ docker compose up -d qdrant postgres ollama
 ### 4. Set up environment variables
 
 ```bash
-cp .env.example .env
+cp .env.example .env          # Docker Compose (ports, service credentials)
+cp api/.env.example api/.env  # Go API config
 ```
 
-Edit `.env` with your local values. At minimum you need:
+Edit `api/.env` with your local values. At minimum you need:
 
 ```env
 DATABASE_URL=postgres://postgres:postgres@localhost:5432/neuralvault
