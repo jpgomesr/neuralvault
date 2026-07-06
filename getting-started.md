@@ -2,6 +2,10 @@
 
 This guide walks you through running NeuralVault locally from scratch.
 
+NeuralVault runs as **infrastructure in Docker Compose** (Postgres, Qdrant, Ollama,
+MinIO, Keycloak) plus the **Go API** and **Next.js frontend**, which you run on your
+host during development.
+
 ---
 
 ## Prerequisites
@@ -12,9 +16,12 @@ You need the following tools installed before continuing:
 | --- | --- | --- |
 | Docker + Docker Compose | latest | [docs.docker.com](https://docs.docker.com/get-docker/) |
 | Ollama | latest | [ollama.com](https://ollama.com/) |
+| Go | 1.26+ | [go.dev/dl](https://go.dev/dl/) |
+| Node.js | 20+ | [nodejs.org](https://nodejs.org/) |
 | Git | any | [git-scm.com](https://git-scm.com/) |
 
-Go and Node.js are only required if you want to run the backend or frontend outside of Docker. For a standard local setup, Docker is enough.
+Docker Compose only starts the backing services — the API and frontend run on your
+host — so **Go and Node.js are required** for a local setup.
 
 ---
 
@@ -37,10 +44,10 @@ ollama pull nomic-embed-text
 
 This is a one-time step. The model is approximately 270MB.
 
-If you also want to run a local LLM instead of using a cloud provider, pull one now:
+If you want to run a local LLM for answers instead of a cloud provider, pull the
+model referenced by `OLLAMA_COMPLETION_MODEL` (default `llama3`):
 
 ```bash
-# Example — pick any model Ollama supports
 ollama pull llama3
 ```
 
@@ -48,94 +55,130 @@ ollama pull llama3
 
 ## Step 3 — Configure environment variables
 
-There are two env templates — one for Docker Compose (repo root) and one for the API (`api/`):
+There are three env templates. Copy them to their local counterparts:
 
 ```bash
-cp .env.example .env          # Docker Compose interpolation (ports, credentials)
-cp api/.env.example api/.env  # Go API configuration
+cp .env.example .env          # Docker Compose (ports, service credentials)
+cp api/.env.example api/.env  # Go API config, read from api/ at startup
+cp web/.env.example web/.env.local  # Frontend (optional — defaults work as-is)
 ```
 
-Review the defaults in `api/.env`. For a standard local setup, no changes are required. The defaults are:
+For a standard local setup **no changes are required** — the defaults line up with
+what Docker Compose starts. Key groups in `api/.env` (all `<PREFIX>_<FIELD>`):
 
 ```env
-# API
-DATABASE_URL=postgres://postgres:postgres@localhost:5432/neuralvault
-QDRANT_URL=http://localhost:6333
+SERVER_PORT=8080
+POSTGRES_HOST=localhost
+QDRANT_URL=localhost
 OLLAMA_URL=http://localhost:11434
+MINIO_ENDPOINT=localhost:9000
 
-# Frontend
-NEXT_PUBLIC_API_URL=http://localhost:8080
+# OIDC — defaults point at the bundled Keycloak dev realm
+AUTH_ISSUER_URL=http://localhost:8081/realms/neuralvault
+AUTH_CLIENT_ID=neuralvault
+AUTH_REDIRECT_URL=http://localhost:8080/auth/callback
+AUTH_POST_LOGIN_URL=http://localhost:3000
 ```
 
-If you want to use a cloud LLM provider, add your API key:
+To use a cloud LLM provider instead of Ollama, set its credentials in `api/.env`
+(see `api/.env.example` for the available keys).
 
-```env
-# Add only the provider you want to use
-OPENAI_API_KEY=sk-...
-ANTHROPIC_API_KEY=sk-ant-...
-GOOGLE_API_KEY=...
-```
+The frontend needs nothing by default: the browser talks to the API through the
+same-origin `/api/*` proxy (`web/next.config.mjs`), which forwards to `API_BASE_URL`
+(default `http://localhost:8080`).
 
 ---
 
-## Step 4 — Start the services
+## Step 4 — Start the infrastructure
 
 ```bash
-docker compose up -d
+docker compose up -d          # or: make up
 ```
 
-This starts:
+This starts the backing services (but **not** the API or frontend):
 
-- **PostgreSQL** — relational database for users, workspaces, and metadata
-- **Qdrant** — vector database for semantic search
-- **Ollama** — local embedding and model inference
-- **NeuralVault API** — Go backend on port `8080`
-- **NeuralVault UI** — Next.js frontend on port `3000`
+- **PostgreSQL** (`:5432`) — users, workspaces, and metadata
+- **Qdrant** (`:6333`) — vector database for semantic search
+- **Ollama** (`:11434`) — local embedding and model inference
+- **MinIO** (`:9000`, console `:9001`) — object storage for uploaded sources
+- **Keycloak** (`:8081`) — OIDC identity provider; the `neuralvault` realm is
+  auto-imported with a seeded dev user
 
-Check that all services are running:
+Check that all services are healthy:
 
 ```bash
 docker compose ps
 ```
-
-All services should show status `running`.
 
 ---
 
 ## Step 5 — Run database migrations
 
 ```bash
-docker compose exec api make migrate
+make migrate-up
 ```
 
-This creates the initial database schema.
+This applies all pending migrations (`cd api && go run ./cmd/migrate up`) and creates
+the schema.
 
 ---
 
-## Step 6 — Open the UI
+## Step 6 — Start the API
 
-Navigate to [http://localhost:3000](http://localhost:3000) in your browser.
+In a terminal:
 
-Create an account, connect a knowledge source, and start chatting.
+```bash
+make run                      # or: cd api && go run ./cmd/server
+```
+
+The API listens on [http://localhost:8080](http://localhost:8080).
+
+---
+
+## Step 7 — Start the frontend
+
+In a second terminal:
+
+```bash
+cd web
+npm install                   # first run only
+npm run dev
+```
+
+The UI is served at [http://localhost:3000](http://localhost:3000).
+
+---
+
+## Step 8 — Sign in and open the UI
+
+Navigate to [http://localhost:3000](http://localhost:3000). You'll be redirected to
+Keycloak to sign in via OIDC. Use the seeded dev user:
+
+| Username | Password |
+| --- | --- |
+| `dev` | `dev` |
+
+After signing in, create or select a workspace, upload a source, and start chatting.
 
 ---
 
 ## Connecting your first knowledge source
 
-Once logged in:
+Once signed in:
 
-1. Go to **Sources** in the sidebar
-2. Click **Add source**
-3. Choose a source type — Obsidian vault, Git repository, PDF, or local folder
-4. Follow the connection steps for that source type
-5. Wait for indexing to complete — this may take a few minutes depending on the size of your source
-6. Open **Chat** and ask a question about your content
+1. Create or select a **workspace** from the switcher — every source and query is
+   scoped to the active workspace
+2. Upload a file as a source
+3. Watch the live indexing status until it completes — this may take a few minutes
+   depending on the size of the file
+4. Ask a question in the chat; the answer streams back grounded in your indexed
+   content, with the source chunks it used
 
 ---
 
 ## Verifying the pipeline
 
-To confirm that embeddings and retrieval are working correctly, check the API health endpoint:
+Check the API health endpoint:
 
 ```bash
 curl http://localhost:8080/health
@@ -145,31 +188,32 @@ Expected response:
 
 ```json
 {
-  "status": "ok",
-  "qdrant": "ok",
-  "postgres": "ok",
-  "ollama": "ok"
+  "server": "OK",
+  "database": "OK"
 }
 ```
 
-If any service shows a status other than `ok`, check its logs:
+If the API fails to start, check the infrastructure logs:
 
 ```bash
 docker compose logs qdrant
 docker compose logs postgres
 docker compose logs ollama
-docker compose logs api
+docker compose logs keycloak
 ```
 
 ---
 
 ## Stopping NeuralVault
 
+Stop the API and frontend with `Ctrl+C` in their terminals, then stop the
+infrastructure:
+
 ```bash
-docker compose down
+docker compose down           # or: make down
 ```
 
-To also remove all stored data (vectors, database):
+To also remove all stored data (vectors, database, objects, realm):
 
 ```bash
 docker compose down -v
@@ -183,7 +227,7 @@ docker compose down -v
 git pull
 docker compose pull
 docker compose up -d
-docker compose exec api make migrate
+make migrate-up
 ```
 
 ---
@@ -192,11 +236,10 @@ docker compose exec api make migrate
 
 **Ollama is not reachable**
 
-Make sure Ollama is running before starting the stack:
+Make sure Ollama is running before starting the API:
 
 ```bash
 ollama serve
-docker compose up -d
 ```
 
 **The embedding model is missing**
@@ -205,9 +248,21 @@ docker compose up -d
 ollama pull nomic-embed-text
 ```
 
+**Login fails / Keycloak not ready**
+
+Keycloak takes a few seconds to import the realm on first start. Confirm it's healthy
+before signing in:
+
+```bash
+docker compose ps keycloak
+docker compose logs keycloak
+```
+
 **Port conflicts**
 
-If port `3000`, `8080`, `5432`, or `6333` is already in use on your machine, edit `docker-compose.yml` and change the host port mapping for the conflicting service.
+If any of `3000` (web), `8080` (api), `5432` (postgres), `6333` (qdrant), `9000`/`9001`
+(minio), `8081` (keycloak), or `11434` (ollama) is already in use, change the host port
+mapping in `.env` (for the Compose services) or the relevant `SERVER_`/`web` config.
 
 **Migrations fail**
 
@@ -215,14 +270,13 @@ Make sure PostgreSQL is fully started before running migrations:
 
 ```bash
 docker compose up -d postgres
-sleep 3
-docker compose exec api make migrate
+make migrate-up
 ```
 
 ---
 
 ## Next steps
 
-- Read [how it works](how-it-works.md) to understand the full retrieval pipeline
-- Read [architecture](architecture.md) for the system design and technology decisions
-- Read [contributing](../CONTRIBUTING.md) if you want to work on the codebase
+- Read [how it works](docs/how-it-works.md) to understand the full retrieval pipeline
+- Read [architecture](docs/architecture.md) for the system design and technology decisions
+- Read [contributing](CONTRIBUTING.md) if you want to work on the codebase
