@@ -41,8 +41,17 @@ func NewHandler(service Service, secret string, cookieSecure bool, postLoginURL 
 	}
 }
 
-// Login handles GET /auth/login. It sets a CSRF state cookie and redirects the
-// browser to the OIDC provider's authorization endpoint.
+// Login godoc
+//
+// It sets a CSRF state cookie and redirects the browser to the OIDC provider's
+// authorization endpoint.
+//
+// @Summary Start OIDC login
+// @Description Sets a CSRF state cookie and redirects to the OIDC provider's authorization endpoint (authorization-code flow).
+// @Tags auth
+// @Success 302
+// @Failure 500
+// @Router /auth/login [get]
 func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	state, err := randomState()
 	if err != nil {
@@ -64,9 +73,21 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, h.service.AuthCodeURL(state), http.StatusFound)
 }
 
-// Callback handles GET /auth/callback. It validates the CSRF state, exchanges
-// the authorization code, provisions the user on first login, sets the session
-// cookie, and redirects to postLoginURL.
+// Callback godoc
+//
+// It validates the CSRF state, exchanges the authorization code, provisions the
+// user on first login, sets the session cookie, and redirects to postLoginURL.
+//
+// @Summary OIDC callback
+// @Description Validates the CSRF state, exchanges the authorization code, provisions the user on first login (JIT), sets the nv_session cookie, and redirects to the post-login URL.
+// @Tags auth
+// @Param state query string true "CSRF state issued by /auth/login"
+// @Param code query string true "OIDC authorization code"
+// @Success 302
+// @Failure 400
+// @Failure 401
+// @Failure 500
+// @Router /auth/callback [get]
 func (h *Handler) Callback(w http.ResponseWriter, r *http.Request) {
 	stateCk, err := r.Cookie(stateCookie)
 	if err != nil || stateCk.Value == "" || stateCk.Value != r.URL.Query().Get("state") {
@@ -111,7 +132,13 @@ func (h *Handler) Callback(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, h.postLoginURL, http.StatusFound)
 }
 
-// Logout handles POST /auth/logout by clearing the session cookie.
+// Logout godoc
+//
+// @Summary Log out
+// @Description Clears the nv_session cookie.
+// @Tags auth
+// @Success 204
+// @Router /auth/logout [post]
 func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 	h.clearCookie(w, sessionCookie)
 	w.WriteHeader(http.StatusNoContent)
@@ -123,8 +150,17 @@ type meResponse struct {
 	Email string `json:"email"`
 }
 
-// Me handles GET /auth/me, returning the authenticated caller. It is mounted
-// behind RequireUser, so the principal is always present.
+// Me godoc
+//
+// It is mounted behind RequireUser, so the principal is always present.
+//
+// @Summary Current user
+// @Description Returns the id and email of the authenticated caller.
+// @Tags auth
+// @Produce json
+// @Success 200
+// @Failure 401
+// @Router /auth/me [get]
 func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
 	p, ok := principalFrom(r.Context())
 	if !ok {

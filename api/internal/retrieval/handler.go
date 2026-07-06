@@ -42,9 +42,22 @@ func NewHandler(service Retriever, members workspaces.Service) *Handler {
 	return &Handler{service: service, members: members}
 }
 
-// Query handles POST /query.
+// Query godoc
+//
 // Embeds the question, runs a workspace-scoped semantic search, and returns
 // the top-k matching chunks ordered by descending similarity score.
+//
+// @Summary Query a workspace
+// @Description Embeds the question from a JSON body {"workspace_id": uuid, "question": string, "top_k": int} and returns the top-k matching chunks ordered by descending similarity score.
+// @Tags query
+// @Accept json
+// @Produce json
+// @Success 200
+// @Failure 400
+// @Failure 401
+// @Failure 403
+// @Failure 500
+// @Router /query [post]
 func (h *Handler) Query(w http.ResponseWriter, r *http.Request) {
 	var req queryRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -98,11 +111,23 @@ func (h *Handler) Query(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(queryResponse{Results: items}) //nolint:errcheck
 }
 
-// QueryStream handles POST /query/stream as an SSE stream. It emits a single
-// "sources" event with the retrieved chunks, then incremental "token" events
-// as the LLM generates the answer, and finally a terminal "done" (or "error")
-// event. Browsers read this with a streaming fetch (POST carries the session
-// cookie); the non-streaming Query above remains for the CLI.
+// QueryStream godoc
+//
+// It emits a single "sources" event with the retrieved chunks, then incremental
+// "token" events as the LLM generates the answer, and finally a terminal "done"
+// (or "error") event. Browsers read this with a streaming fetch (POST carries
+// the session cookie); the non-streaming Query above remains for the CLI.
+//
+// @Summary Stream a grounded answer (SSE)
+// @Description Runs retrieval for a JSON body {"workspace_id": uuid, "question": string, "top_k": int}, then streams SSE events: one "sources" event with the grounding chunks, incremental "token" events, and a terminal "done" or "error" event.
+// @Tags query
+// @Accept json
+// @Success 200
+// @Failure 400
+// @Failure 401
+// @Failure 403
+// @Failure 500
+// @Router /query/stream [post]
 func (h *Handler) QueryStream(w http.ResponseWriter, r *http.Request) {
 	var req queryRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {

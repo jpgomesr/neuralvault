@@ -5,6 +5,68 @@ info:
   title: NeuralVault API
   version: 0.0.1
 paths:
+  /auth/callback:
+    get:
+      description: Validates the CSRF state, exchanges the authorization code, provisions
+        the user on first login (JIT), sets the nv_session cookie, and redirects to
+        the post-login URL.
+      parameters:
+      - description: CSRF state issued by /auth/login
+        in: query
+        name: state
+        required: true
+        type: string
+      - description: OIDC authorization code
+        in: query
+        name: code
+        required: true
+        type: string
+      responses:
+        "302":
+          description: Found
+        "400":
+          description: Bad Request
+        "401":
+          description: Unauthorized
+        "500":
+          description: Internal Server Error
+      summary: OIDC callback
+      tags:
+      - auth
+  /auth/login:
+    get:
+      description: Sets a CSRF state cookie and redirects to the OIDC provider's authorization
+        endpoint (authorization-code flow).
+      responses:
+        "302":
+          description: Found
+        "500":
+          description: Internal Server Error
+      summary: Start OIDC login
+      tags:
+      - auth
+  /auth/logout:
+    post:
+      description: Clears the nv_session cookie.
+      responses:
+        "204":
+          description: No Content
+      summary: Log out
+      tags:
+      - auth
+  /auth/me:
+    get:
+      description: Returns the id and email of the authenticated caller.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+        "401":
+          description: Unauthorized
+      summary: Current user
+      tags:
+      - auth
   /health:
     get:
       description: Returns all health status of all connections
@@ -14,4 +76,214 @@ paths:
       summary: Get all health status
       tags:
       - health
+  /query:
+    post:
+      consumes:
+      - application/json
+      description: 'Embeds the question from a JSON body {"workspace_id": uuid, "question":
+        string, "top_k": int} and returns the top-k matching chunks ordered by descending
+        similarity score.'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+        "400":
+          description: Bad Request
+        "401":
+          description: Unauthorized
+        "403":
+          description: Forbidden
+        "500":
+          description: Internal Server Error
+      summary: Query a workspace
+      tags:
+      - query
+  /query/stream:
+    post:
+      consumes:
+      - application/json
+      description: 'Runs retrieval for a JSON body {"workspace_id": uuid, "question":
+        string, "top_k": int}, then streams SSE events: one "sources" event with the
+        grounding chunks, incremental "token" events, and a terminal "done" or "error"
+        event.'
+      responses:
+        "200":
+          description: OK
+        "400":
+          description: Bad Request
+        "401":
+          description: Unauthorized
+        "403":
+          description: Forbidden
+        "500":
+          description: Internal Server Error
+      summary: Stream a grounded answer (SSE)
+      tags:
+      - query
+  /sources:
+    get:
+      description: Returns the sources of a workspace the caller belongs to.
+      parameters:
+      - description: Workspace UUID
+        in: query
+        name: workspace_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+        "400":
+          description: Bad Request
+        "401":
+          description: Unauthorized
+        "403":
+          description: Forbidden
+        "500":
+          description: Internal Server Error
+      summary: List sources
+      tags:
+      - sources
+    post:
+      consumes:
+      - multipart/form-data
+      description: Uploads one or more files to object storage and starts background
+        indexing. Returns the created source and its status_url.
+      parameters:
+      - description: Workspace UUID
+        in: formData
+        name: workspace_id
+        required: true
+        type: string
+      - description: Source name
+        in: formData
+        name: name
+        required: true
+        type: string
+      - description: Files to ingest (repeatable)
+        in: formData
+        name: files
+        required: true
+        type: file
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Accepted
+        "400":
+          description: Bad Request
+        "401":
+          description: Unauthorized
+        "403":
+          description: Forbidden
+        "500":
+          description: Internal Server Error
+      summary: Create a source
+      tags:
+      - sources
+  /sources/{id}/chunks:
+    get:
+      description: Returns the indexed chunks produced from a source.
+      parameters:
+      - description: Source UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+        "400":
+          description: Bad Request
+        "401":
+          description: Unauthorized
+        "500":
+          description: Internal Server Error
+      summary: List chunks of a source
+      tags:
+      - sources
+  /sources/{id}/ingest:
+    post:
+      description: Re-downloads the source's files from object storage and re-indexes
+        them in the background.
+      parameters:
+      - description: Source UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Accepted
+        "400":
+          description: Bad Request
+        "401":
+          description: Unauthorized
+        "500":
+          description: Internal Server Error
+      summary: Re-ingest a source
+      tags:
+      - sources
+  /sources/{id}/status:
+    get:
+      description: 'Server-Sent Events stream of indexing progress: progress events,
+        then a terminal done or error event. Heartbeat every 30s; 15min timeout.'
+      parameters:
+      - description: Source UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+        "400":
+          description: Bad Request
+        "401":
+          description: Unauthorized
+        "500":
+          description: Internal Server Error
+      summary: Stream indexing status (SSE)
+      tags:
+      - sources
+  /workspaces:
+    get:
+      description: Returns the workspaces the authenticated caller belongs to.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+        "401":
+          description: Unauthorized
+        "500":
+          description: Internal Server Error
+      summary: List workspaces
+      tags:
+      - workspaces
+    post:
+      consumes:
+      - application/json
+      description: 'Creates a workspace from a JSON body {"name": string}; the caller
+        becomes its owner.'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+        "400":
+          description: Bad Request
+        "401":
+          description: Unauthorized
+        "500":
+          description: Internal Server Error
+      summary: Create a workspace
+      tags:
+      - workspaces
 swagger: "2.0"

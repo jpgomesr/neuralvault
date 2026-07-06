@@ -25,8 +25,21 @@ type createRequest struct {
 	Name string `json:"name"`
 }
 
-// Create handles POST /workspaces. The creator becomes the workspace owner.
-// It is mounted behind RequireUser, so the caller is always authenticated.
+// Create godoc
+//
+// The creator becomes the workspace owner. It is mounted behind RequireUser,
+// so the caller is always authenticated.
+//
+// @Summary Create a workspace
+// @Description Creates a workspace from a JSON body {"name": string}; the caller becomes its owner.
+// @Tags workspaces
+// @Accept json
+// @Produce json
+// @Success 201
+// @Failure 400
+// @Failure 401
+// @Failure 500
+// @Router /workspaces [post]
 func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	userID := auth.UserID(r.Context())
 
@@ -55,7 +68,16 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(ws) //nolint:errcheck
 }
 
-// List handles GET /workspaces, returning the caller's workspaces.
+// List godoc
+//
+// @Summary List workspaces
+// @Description Returns the workspaces the authenticated caller belongs to.
+// @Tags workspaces
+// @Produce json
+// @Success 200
+// @Failure 401
+// @Failure 500
+// @Router /workspaces [get]
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	userID := auth.UserID(r.Context())
 
