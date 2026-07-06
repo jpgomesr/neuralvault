@@ -2,6 +2,7 @@ package retrieval
 
 import (
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 
@@ -95,4 +96,90 @@ func (h *Handler) Query(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(queryResponse{Results: items}) //nolint:errcheck
+}
+
+// QueryStream handles POST /query/stream as an SSE stream. It emits a single
+// "sources" event with the retrieved chunks, then incremental "token" events
+// as the LLM generates the answer, and finally a terminal "done" (or "error")
+// event. Browsers read this with a streaming fetch (POST carries the session
+// cookie); the non-streaming Query above remains for the CLI.
+func (h *Handler) QueryStream(w http.ResponseWriter, r *http.Request) {
+	var req queryRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		slog.WarnContext(r.Context(), "invalid query request", "err", err, "request_id", logger.RequestID(r.Context()))
+		http.Error(w, "invalid request body: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if req.WorkspaceID == uuid.Nil {
+		http.Error(w, "workspace_id is required", http.StatusBadRequest)
+		return
+	}
+	if req.Question == "" {
+		http.Error(w, "question is required", http.StatusBadRequest)
+		return
+	}
+
+	if !workspaces.EnsureMember(w, r, h.members, req.WorkspaceID) {
+		return
+	}
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "streaming not supported by this server", http.StatusInternalServerError)
+		return
+	}
+
+	// Run retrieval and start the completion stream before writing SSE headers,
+	// so a failure here can still return a plain error status.
+	chunks, stream, err := h.service.Answer(r.Context(), RetrieveRequest{
+		WorkspaceID: req.WorkspaceID,
+		Query:       req.Question,
+		TopK:        req.TopK,
+	})
+	if err != nil {
+		slog.ErrorContext(r.Context(), "answer failed", "err", err, "workspace_id", req.WorkspaceID, "request_id", logger.RequestID(r.Context()))
+		http.Error(w, "failed to run query: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	// Surface the grounding sources up front so the UI can render them while the
+	// answer streams in.
+	items := make([]queryResultItem, len(chunks))
+	for i, res := range chunks {
+		items[i] = queryResultItem{
+			ChunkID: res.Chunk.ID.String(),
+			Content: res.Chunk.Content,
+			Score:   res.Score,
+		}
+	}
+	writeSSEEvent(w, "sources", queryResponse{Results: items})
+	flusher.Flush()
+
+	for chunk := range stream {
+		if chunk.Error != nil {
+			slog.ErrorContext(r.Context(), "completion stream error", "err", chunk.Error, "workspace_id", req.WorkspaceID, "request_id", logger.RequestID(r.Context()))
+			writeSSEEvent(w, "error", map[string]string{"error": chunk.Error.Error()})
+			flusher.Flush()
+			return
+		}
+		if chunk.Content != "" {
+			writeSSEEvent(w, "token", map[string]string{"content": chunk.Content})
+			flusher.Flush()
+		}
+		if chunk.Done {
+			writeSSEEvent(w, "done", map[string]any{})
+			flusher.Flush()
+			return
+		}
+	}
+}
+
+// writeSSEEvent writes a named SSE event with a JSON data payload.
+func writeSSEEvent(w http.ResponseWriter, event string, data any) {
+	payload, _ := json.Marshal(data)
+	fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, payload) //nolint:errcheck
 }

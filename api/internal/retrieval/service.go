@@ -9,12 +9,14 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	qdrantpb "github.com/qdrant/go-client/qdrant"
 
 	"github.com/jpgomesr/NeuralVault/internal/embedding"
+	"github.com/jpgomesr/NeuralVault/internal/llm"
 	"github.com/jpgomesr/NeuralVault/internal/model"
 	"github.com/jpgomesr/NeuralVault/internal/storage"
 	"github.com/jpgomesr/NeuralVault/internal/vectorstorage"
@@ -41,26 +43,33 @@ type RetrievedChunk struct {
 }
 
 // Retriever embeds a query, searches Qdrant scoped to a workspace, and hydrates
-// the results with chunk content from Postgres.
+// the results with chunk content from Postgres. Answer additionally streams a
+// grounded LLM completion built from the retrieved context.
 type Retriever interface {
 	Retrieve(ctx context.Context, req RetrieveRequest) ([]RetrievedChunk, error)
+	Answer(ctx context.Context, req RetrieveRequest) ([]RetrievedChunk, <-chan llm.StreamChunk, error)
 }
 
 // RetrievalService is the concrete implementation of Retriever.
 type RetrievalService struct {
-	pool           storage.Pool
-	embedder       embedding.Embedder
-	vectorStore    vectorstorage.Client
-	collectionName string
+	pool            storage.Pool
+	embedder        embedding.Embedder
+	vectorStore     vectorstorage.Client
+	provider        llm.Provider
+	collectionName  string
+	completionModel string
 }
 
-// NewRetrievalService constructs a RetrievalService.
-func NewRetrievalService(pool storage.Pool, embedder embedding.Embedder, vectorStore vectorstorage.Client, collectionName string) *RetrievalService {
+// NewRetrievalService constructs a RetrievalService. provider and
+// completionModel back the streaming Answer flow; Retrieve does not use them.
+func NewRetrievalService(pool storage.Pool, embedder embedding.Embedder, vectorStore vectorstorage.Client, provider llm.Provider, collectionName, completionModel string) *RetrievalService {
 	return &RetrievalService{
-		pool:           pool,
-		embedder:       embedder,
-		vectorStore:    vectorStore,
-		collectionName: collectionName,
+		pool:            pool,
+		embedder:        embedder,
+		vectorStore:     vectorStore,
+		provider:        provider,
+		collectionName:  collectionName,
+		completionModel: completionModel,
 	}
 }
 
@@ -139,6 +148,50 @@ func (s *RetrievalService) Retrieve(ctx context.Context, req RetrieveRequest) ([
 	})
 
 	return results, nil
+}
+
+// systemPrompt frames the assistant so it answers strictly from the retrieved
+// context and admits when the context is insufficient, rather than inventing.
+const systemPrompt = "You are NeuralVault's assistant. Answer the user's question using ONLY the provided context. " +
+	"If the context does not contain the answer, say you don't know. Be concise and cite nothing outside the context."
+
+// Answer runs retrieval for req, then streams a grounded LLM completion built
+// from the retrieved chunks. It returns the chunks (so the caller can surface
+// sources immediately) alongside a channel of incremental completion chunks;
+// the channel is closed once the model finishes or emits an error.
+func (s *RetrievalService) Answer(ctx context.Context, req RetrieveRequest) ([]RetrievedChunk, <-chan llm.StreamChunk, error) {
+	chunks, err := s.Retrieve(ctx, req)
+	if err != nil {
+		return nil, nil, fmt.Errorf("retrieving context: %w", err)
+	}
+
+	stream, err := s.provider.Stream(ctx, llm.CompletionRequest{
+		Messages: buildMessages(req.Query, chunks),
+		Model:    s.completionModel,
+	})
+	if err != nil {
+		return chunks, nil, fmt.Errorf("starting completion stream: %w", err)
+	}
+	return chunks, stream, nil
+}
+
+// buildMessages assembles the RAG prompt: a system instruction plus a user
+// message carrying the numbered context chunks and the question.
+func buildMessages(question string, chunks []RetrievedChunk) []llm.Message {
+	var b strings.Builder
+	b.WriteString("Context:\n")
+	if len(chunks) == 0 {
+		b.WriteString("(no relevant context found)\n")
+	}
+	for i, c := range chunks {
+		fmt.Fprintf(&b, "[%d] %s\n", i+1, c.Chunk.Content)
+	}
+	fmt.Fprintf(&b, "\nQuestion: %s", question)
+
+	return []llm.Message{
+		{Role: llm.RoleSystem, Content: systemPrompt},
+		{Role: llm.RoleUser, Content: b.String()},
+	}
 }
 
 // loadChunks batch-fetches chunks by ID. Row order is not guaranteed to match

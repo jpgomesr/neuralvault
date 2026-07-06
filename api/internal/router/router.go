@@ -11,6 +11,7 @@ import (
 	"github.com/jpgomesr/NeuralVault/internal/config"
 	"github.com/jpgomesr/NeuralVault/internal/embedding"
 	"github.com/jpgomesr/NeuralVault/internal/health"
+	"github.com/jpgomesr/NeuralVault/internal/llm"
 	"github.com/jpgomesr/NeuralVault/internal/objectstorage"
 	"github.com/jpgomesr/NeuralVault/internal/retrieval"
 	"github.com/jpgomesr/NeuralVault/internal/sourcereader"
@@ -21,7 +22,7 @@ import (
 	httpSwagger "github.com/swaggo/http-swagger"
 )
 
-func NewRouter(cfg *config.Config, pool storage.Pool, store objectstorage.Client, embedder embedding.Embedder, vectorStore vectorstorage.Client, authService auth.Service) *chi.Mux {
+func NewRouter(cfg *config.Config, pool storage.Pool, store objectstorage.Client, embedder embedding.Embedder, vectorStore vectorstorage.Client, llmProvider llm.Provider, authService auth.Service) *chi.Mux {
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
 	r.Use(requestLogging)
@@ -41,7 +42,7 @@ func NewRouter(cfg *config.Config, pool storage.Pool, store objectstorage.Client
 	sourceService := sources.NewSourceService(pool, store, sourcereader.NewFileReader(), chunkService, bus, embedder, vectorStore, cfg.Qdrant.CollectionName, cfg.Ollama.EmbeddingModel)
 	sourceHandler := sources.NewHandler(sourceService, bus, workspaceService)
 
-	retrievalService := retrieval.NewRetrievalService(pool, embedder, vectorStore, cfg.Qdrant.CollectionName)
+	retrievalService := retrieval.NewRetrievalService(pool, embedder, vectorStore, llmProvider, cfg.Qdrant.CollectionName, cfg.Ollama.CompletionModel)
 	retrievalHandler := retrieval.NewHandler(retrievalService, workspaceService)
 
 	authHandler := auth.NewHandler(authService, cfg.Auth.SessionSecret, cfg.Auth.CookieSecure, cfg.Auth.PostLoginURL)

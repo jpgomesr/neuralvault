@@ -6,22 +6,39 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/jpgomesr/NeuralVault/internal/llm"
 	"github.com/jpgomesr/NeuralVault/internal/model"
 )
 
 // fakeRetriever is a minimal test double for Retriever.
 type fakeRetriever struct {
-	results []RetrievedChunk
-	err     error
-	gotReq  RetrieveRequest
+	results   []RetrievedChunk
+	err       error
+	gotReq    RetrieveRequest
+	streamOut []llm.StreamChunk // chunks Answer emits on its channel
+	answerErr error
 }
 
 func (f *fakeRetriever) Retrieve(_ context.Context, req RetrieveRequest) ([]RetrievedChunk, error) {
 	f.gotReq = req
 	return f.results, f.err
+}
+
+func (f *fakeRetriever) Answer(_ context.Context, req RetrieveRequest) ([]RetrievedChunk, <-chan llm.StreamChunk, error) {
+	f.gotReq = req
+	if f.answerErr != nil {
+		return nil, nil, f.answerErr
+	}
+	ch := make(chan llm.StreamChunk, len(f.streamOut))
+	for _, c := range f.streamOut {
+		ch <- c
+	}
+	close(ch)
+	return f.results, ch, nil
 }
 
 type errTest string
@@ -91,6 +108,49 @@ func TestQuery_Success(t *testing.T) {
 	}
 	if fake.gotReq.TopK != 3 {
 		t.Errorf("top_k not forwarded to service: got %d", fake.gotReq.TopK)
+	}
+}
+
+func TestQueryStream_EmitsSourcesTokensDone(t *testing.T) {
+	wid := uuid.New()
+	chunkID := uuid.New()
+	fake := &fakeRetriever{
+		results:   []RetrievedChunk{{Chunk: model.Chunk{ID: chunkID, Content: "grounding"}, Score: 0.9}},
+		streamOut: []llm.StreamChunk{{Content: "Hel"}, {Content: "lo"}, {Done: true}},
+	}
+	h := NewHandler(fake, allowMembers())
+
+	body := `{"workspace_id":"` + wid.String() + `","question":"hi?"}`
+	w := httptest.NewRecorder()
+	h.QueryStream(w, postQuery(body))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if ct := w.Header().Get("Content-Type"); ct != "text/event-stream" {
+		t.Fatalf("expected SSE content-type, got %q", ct)
+	}
+	out := w.Body.String()
+	for _, want := range []string{"event: sources", chunkID.String(), "event: token", `"Hel"`, `"lo"`, "event: done"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("stream missing %q\nfull body:\n%s", want, out)
+		}
+	}
+}
+
+func TestQueryStream_ForbiddenWhenNotMember(t *testing.T) {
+	fake := &fakeRetriever{}
+	h := NewHandler(fake, fakeMembers{member: false})
+
+	body := `{"workspace_id":"` + uuid.New().String() + `","question":"hi?"}`
+	w := httptest.NewRecorder()
+	h.QueryStream(w, postQuery(body))
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d: %s", w.Code, w.Body.String())
+	}
+	if fake.gotReq.WorkspaceID != uuid.Nil {
+		t.Errorf("Answer was called despite forbidden access")
 	}
 }
 
