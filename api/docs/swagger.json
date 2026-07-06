@@ -8,6 +8,96 @@
     },
     "basePath": "/",
     "paths": {
+        "/auth/callback": {
+            "get": {
+                "description": "Validates the CSRF state, exchanges the authorization code, provisions the user on first login (JIT), sets the nv_session cookie, and redirects to the post-login URL.",
+                "tags": [
+                    "auth"
+                ],
+                "summary": "OIDC callback",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "CSRF state issued by /auth/login",
+                        "name": "state",
+                        "in": "query",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "OIDC authorization code",
+                        "name": "code",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "302": {
+                        "description": "Found"
+                    },
+                    "400": {
+                        "description": "Bad Request"
+                    },
+                    "401": {
+                        "description": "Unauthorized"
+                    },
+                    "500": {
+                        "description": "Internal Server Error"
+                    }
+                }
+            }
+        },
+        "/auth/login": {
+            "get": {
+                "description": "Sets a CSRF state cookie and redirects to the OIDC provider's authorization endpoint (authorization-code flow).",
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Start OIDC login",
+                "responses": {
+                    "302": {
+                        "description": "Found"
+                    },
+                    "500": {
+                        "description": "Internal Server Error"
+                    }
+                }
+            }
+        },
+        "/auth/logout": {
+            "post": {
+                "description": "Clears the nv_session cookie.",
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Log out",
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    }
+                }
+            }
+        },
+        "/auth/me": {
+            "get": {
+                "description": "Returns the id and email of the authenticated caller.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Current user",
+                "responses": {
+                    "200": {
+                        "description": "OK"
+                    },
+                    "401": {
+                        "description": "Unauthorized"
+                    }
+                }
+            }
+        },
         "/health": {
             "get": {
                 "description": "Returns all health status of all connections",
@@ -18,6 +108,310 @@
                 "responses": {
                     "200": {
                         "description": "OK"
+                    }
+                }
+            }
+        },
+        "/query": {
+            "post": {
+                "description": "Embeds the question from a JSON body {\"workspace_id\": uuid, \"question\": string, \"top_k\": int} and returns the top-k matching chunks ordered by descending similarity score.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "query"
+                ],
+                "summary": "Query a workspace",
+                "responses": {
+                    "200": {
+                        "description": "OK"
+                    },
+                    "400": {
+                        "description": "Bad Request"
+                    },
+                    "401": {
+                        "description": "Unauthorized"
+                    },
+                    "403": {
+                        "description": "Forbidden"
+                    },
+                    "500": {
+                        "description": "Internal Server Error"
+                    }
+                }
+            }
+        },
+        "/query/stream": {
+            "post": {
+                "description": "Runs retrieval for a JSON body {\"workspace_id\": uuid, \"question\": string, \"top_k\": int}, then streams SSE events: one \"sources\" event with the grounding chunks, incremental \"token\" events, and a terminal \"done\" or \"error\" event.",
+                "consumes": [
+                    "application/json"
+                ],
+                "tags": [
+                    "query"
+                ],
+                "summary": "Stream a grounded answer (SSE)",
+                "responses": {
+                    "200": {
+                        "description": "OK"
+                    },
+                    "400": {
+                        "description": "Bad Request"
+                    },
+                    "401": {
+                        "description": "Unauthorized"
+                    },
+                    "403": {
+                        "description": "Forbidden"
+                    },
+                    "500": {
+                        "description": "Internal Server Error"
+                    }
+                }
+            }
+        },
+        "/sources": {
+            "get": {
+                "description": "Returns the sources of a workspace the caller belongs to.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "sources"
+                ],
+                "summary": "List sources",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Workspace UUID",
+                        "name": "workspace_id",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK"
+                    },
+                    "400": {
+                        "description": "Bad Request"
+                    },
+                    "401": {
+                        "description": "Unauthorized"
+                    },
+                    "403": {
+                        "description": "Forbidden"
+                    },
+                    "500": {
+                        "description": "Internal Server Error"
+                    }
+                }
+            },
+            "post": {
+                "description": "Uploads one or more files to object storage and starts background indexing. Returns the created source and its status_url.",
+                "consumes": [
+                    "multipart/form-data"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "sources"
+                ],
+                "summary": "Create a source",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Workspace UUID",
+                        "name": "workspace_id",
+                        "in": "formData",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Source name",
+                        "name": "name",
+                        "in": "formData",
+                        "required": true
+                    },
+                    {
+                        "type": "file",
+                        "description": "Files to ingest (repeatable)",
+                        "name": "files",
+                        "in": "formData",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "Accepted"
+                    },
+                    "400": {
+                        "description": "Bad Request"
+                    },
+                    "401": {
+                        "description": "Unauthorized"
+                    },
+                    "403": {
+                        "description": "Forbidden"
+                    },
+                    "500": {
+                        "description": "Internal Server Error"
+                    }
+                }
+            }
+        },
+        "/sources/{id}/chunks": {
+            "get": {
+                "description": "Returns the indexed chunks produced from a source.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "sources"
+                ],
+                "summary": "List chunks of a source",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Source UUID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK"
+                    },
+                    "400": {
+                        "description": "Bad Request"
+                    },
+                    "401": {
+                        "description": "Unauthorized"
+                    },
+                    "500": {
+                        "description": "Internal Server Error"
+                    }
+                }
+            }
+        },
+        "/sources/{id}/ingest": {
+            "post": {
+                "description": "Re-downloads the source's files from object storage and re-indexes them in the background.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "sources"
+                ],
+                "summary": "Re-ingest a source",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Source UUID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "Accepted"
+                    },
+                    "400": {
+                        "description": "Bad Request"
+                    },
+                    "401": {
+                        "description": "Unauthorized"
+                    },
+                    "500": {
+                        "description": "Internal Server Error"
+                    }
+                }
+            }
+        },
+        "/sources/{id}/status": {
+            "get": {
+                "description": "Server-Sent Events stream of indexing progress: progress events, then a terminal done or error event. Heartbeat every 30s; 15min timeout.",
+                "tags": [
+                    "sources"
+                ],
+                "summary": "Stream indexing status (SSE)",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Source UUID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK"
+                    },
+                    "400": {
+                        "description": "Bad Request"
+                    },
+                    "401": {
+                        "description": "Unauthorized"
+                    },
+                    "500": {
+                        "description": "Internal Server Error"
+                    }
+                }
+            }
+        },
+        "/workspaces": {
+            "get": {
+                "description": "Returns the workspaces the authenticated caller belongs to.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "workspaces"
+                ],
+                "summary": "List workspaces",
+                "responses": {
+                    "200": {
+                        "description": "OK"
+                    },
+                    "401": {
+                        "description": "Unauthorized"
+                    },
+                    "500": {
+                        "description": "Internal Server Error"
+                    }
+                }
+            },
+            "post": {
+                "description": "Creates a workspace from a JSON body {\"name\": string}; the caller becomes its owner.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "workspaces"
+                ],
+                "summary": "Create a workspace",
+                "responses": {
+                    "201": {
+                        "description": "Created"
+                    },
+                    "400": {
+                        "description": "Bad Request"
+                    },
+                    "401": {
+                        "description": "Unauthorized"
+                    },
+                    "500": {
+                        "description": "Internal Server Error"
                     }
                 }
             }

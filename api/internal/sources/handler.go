@@ -28,9 +28,25 @@ func NewHandler(service Service, bus *ProgressBus, members workspaces.Service) *
 	return &Handler{service: service, bus: bus, members: members}
 }
 
-// CreateSource handles POST /sources.
+// CreateSource godoc
+//
 // Accepts multipart/form-data with fields workspace_id, name, and one or more files.
 // Uploads files to object storage and returns 202 immediately; indexing runs in background.
+//
+// @Summary Create a source
+// @Description Uploads one or more files to object storage and starts background indexing. Returns the created source and its status_url.
+// @Tags sources
+// @Accept mpfd
+// @Produce json
+// @Param workspace_id formData string true "Workspace UUID"
+// @Param name formData string true "Source name"
+// @Param files formData file true "Files to ingest (repeatable)"
+// @Success 202
+// @Failure 400
+// @Failure 401
+// @Failure 403
+// @Failure 500
+// @Router /sources [post]
 func (h *Handler) CreateSource(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseMultipartForm(32 << 20); err != nil {
 		slog.WarnContext(r.Context(), "invalid create source request", "err", err, "request_id", logger.RequestID(r.Context()))
@@ -97,7 +113,19 @@ func (h *Handler) CreateSource(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// ListSources handles GET /sources?workspace_id=<uuid>.
+// ListSources godoc
+//
+// @Summary List sources
+// @Description Returns the sources of a workspace the caller belongs to.
+// @Tags sources
+// @Produce json
+// @Param workspace_id query string true "Workspace UUID"
+// @Success 200
+// @Failure 400
+// @Failure 401
+// @Failure 403
+// @Failure 500
+// @Router /sources [get]
 func (h *Handler) ListSources(w http.ResponseWriter, r *http.Request) {
 	workspaceID, err := uuid.Parse(r.URL.Query().Get("workspace_id"))
 	if err != nil {
@@ -121,9 +149,21 @@ func (h *Handler) ListSources(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(sources) //nolint:errcheck
 }
 
-// IngestSource handles POST /sources/{id}/ingest.
+// IngestSource godoc
+//
 // Re-downloads files from object storage and re-indexes in the background.
 // Returns 202 immediately; progress via GET /sources/{id}/status.
+//
+// @Summary Re-ingest a source
+// @Description Re-downloads the source's files from object storage and re-indexes them in the background.
+// @Tags sources
+// @Produce json
+// @Param id path string true "Source UUID"
+// @Success 202
+// @Failure 400
+// @Failure 401
+// @Failure 500
+// @Router /sources/{id}/ingest [post]
 func (h *Handler) IngestSource(w http.ResponseWriter, r *http.Request) {
 	sourceID, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
@@ -146,7 +186,18 @@ func (h *Handler) IngestSource(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// ListChunks handles GET /sources/{id}/chunks.
+// ListChunks godoc
+//
+// @Summary List chunks of a source
+// @Description Returns the indexed chunks produced from a source.
+// @Tags sources
+// @Produce json
+// @Param id path string true "Source UUID"
+// @Success 200
+// @Failure 400
+// @Failure 401
+// @Failure 500
+// @Router /sources/{id}/chunks [get]
 func (h *Handler) ListChunks(w http.ResponseWriter, r *http.Request) {
 	sourceID, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
@@ -166,13 +217,24 @@ func (h *Handler) ListChunks(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(chunks) //nolint:errcheck
 }
 
-// StreamStatus handles GET /sources/{id}/status as an SSE stream.
+// StreamStatus godoc
+//
 // Sends progress events while indexing is in progress, then a terminal
 // EventDone or EventError event and closes the connection.
 //
 // The client should subscribe to this endpoint immediately after POST /sources
 // to avoid missing events. If the source is already in a terminal state when
 // the client connects, the terminal event is sent right away.
+//
+// @Summary Stream indexing status (SSE)
+// @Description Server-Sent Events stream of indexing progress: progress events, then a terminal done or error event. Heartbeat every 30s; 15min timeout.
+// @Tags sources
+// @Param id path string true "Source UUID"
+// @Success 200
+// @Failure 400
+// @Failure 401
+// @Failure 500
+// @Router /sources/{id}/status [get]
 func (h *Handler) StreamStatus(w http.ResponseWriter, r *http.Request) {
 	sourceID, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {

@@ -9,11 +9,11 @@ Core retrieval pipeline.
 - [X] Chunking engine
 - [X] Embedding generation
 - [X] Qdrant vector storage
-- [ ] Basic chat interface
+- [X] Basic chat interface
 - [X] Ollama local model support
-- [ ] Auth
-- [ ] Workspace management
-- [ ] Workspace membership middleware
+- [X] Auth
+- [X] Workspace management
+- [X] Workspace membership middleware
 
 ---
 

@@ -1,7 +1,7 @@
 #### SPEC-011: Authentication, workspace management, and tenant isolation
 
 ##### Status
-Draft
+Implemented
 
 ##### Problem statement
 The data model is multi-tenant from day one (`users`, `workspace`, `user_workspace`, `user_identity` — [SPEC-005](SPEC-005-relational-persistence.md)), and every ingestion and retrieval operation is workspace-scoped. But nothing enforces any of it: `workspace_id` is client-supplied on every request (`POST /query` body, `POST /sources` form field), no endpoint creates workspaces or users, and no middleware establishes who the caller is. Any caller can read or write any workspace. [SPEC-009](SPEC-009-platform-cross-cutting.md) records this as an acknowledged gap; roadmap Phase 1 now lists Auth, Workspace management, and Workspace membership middleware. This spec designs how identity is established, how workspaces are created and joined, and where tenant isolation is enforced.
@@ -15,7 +15,7 @@ The data model is multi-tenant from day one (`users`, `workspace`, `user_workspa
 ##### Non-goals
 - First-party credentials (password hashing, reset flows) — `user_identity` models external providers only.
 - Role-based permission granularity beyond membership — `owner`/`admin`/`member` exist in the schema, but per-role authorization rules (who can delete sources, invite members) are deferred until the operations that need them exist.
-- API tokens for non-browser clients (CLI, SDKs, MCP — [SPEC-010](SPEC-010-ecosystem-dx.md)) — designed later on top of the same middleware; the CLI keeps working against trusted local instances meanwhile.
+- API tokens for non-browser clients (CLI, SDKs, MCP — [SPEC-010](SPEC-010-ecosystem-dx.md)) — designed later on top of the same middleware. Consequence: the CLI cannot authenticate until that lands ([#104](https://github.com/jpgomesr/neuralvault/issues/104)).
 - Postgres row-level security — isolation is enforced in the application layer for now (see Open questions in [SPEC-005](SPEC-005-relational-persistence.md)).
 
 ##### Proposed design
@@ -35,11 +35,13 @@ Two new domains following the repo's handler/service/routes layout, plus middlew
 - `docs/roadmap.md` Phase 1 items: Auth, Workspace management, Workspace membership middleware
 
 ##### Open questions
-- Session mechanism: server-side sessions (needs a store — Redis is "future" in `docs/architecture.md`) vs. stateless JWT (revocation story?). This is an ADR-worthy decision.
-- Given Keycloak-for-dev is settled (via standard OIDC, so production can point at any OIDC provider by config), is a dev-mode auth bypass still worthwhile for local single-user setups, or does a preconfigured Keycloak realm remove the friction that motivated it?
-- Enforcement point: is membership checked once in middleware (needs the `workspace_id` extracted before the handler — it lives in body/form/query today, in three different shapes) or per-service? Middleware may push `workspace_id` into the path (`/workspaces/{id}/sources`), which is a breaking API reshape.
-- Do SSE endpoints (`GET /sources/{id}/status`) authenticate the same way, given `EventSource` cannot set headers?
-- How does the CLI ([SPEC-010](SPEC-010-ecosystem-dx.md)) authenticate before API tokens exist?
+All but the last were settled by the implementation (#94–#98):
+
+- **Session mechanism — settled: stateless HMAC-signed token.** The `nv_session` HttpOnly cookie carries `base64url(claimsJSON).base64url(HMAC-SHA256)` (`internal/auth/session.go`), 24h TTL, keyed by `AUTH_SESSION_SECRET`. Self-contained and tamper-evident without a session store or a JWT dependency; revocation is expiry-only for now.
+- **Dev-mode auth bypass — settled: not needed.** The Compose Keycloak service auto-imports the `neuralvault` realm with a seeded `dev`/`dev` user (`docker/keycloak/import/`), which removes the local-setup friction that motivated a bypass.
+- **Enforcement point — settled: per-handler guard, not middleware.** `workspaces.EnsureMember` (`internal/workspaces/guard.go`) is called by each workspace-scoped handler (`sources`, `retrieval`) after `RequireUser`; `workspace_id` keeps living in body/form/query, so no breaking path reshape was needed.
+- **SSE authentication — settled: same cookie.** `GET /sources/{id}/status` sits inside the `RequireUser` group; `EventSource` cannot set headers, but it sends first-party cookies, and the frontend reaches the API through a same-origin `/api/*` proxy (`web/next.config.mjs`), so the `nv_session` cookie flows on SSE requests too.
+- **CLI authentication — still open**, now tracked in [#104](https://github.com/jpgomesr/neuralvault/issues/104): `api/cmd/cli` sends no credential, so `nv ingest`/`nv query` receive `401` against the protected routes until an `nv login` flow (device grant, loopback code flow, or API tokens per [SPEC-010](SPEC-010-ecosystem-dx.md)) exists.
 
 ##### Acceptance criteria
 - An unauthenticated request to `/sources`, `/query`, or `/workspaces` receives `401`; `/health` and `/swagger` remain public.
