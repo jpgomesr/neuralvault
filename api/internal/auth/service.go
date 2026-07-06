@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"strings"
 	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
@@ -26,6 +28,9 @@ type Service interface {
 	// verifies the ID token, and JIT-provisions the user. It returns the
 	// resolved user, whether they were newly created, and any error.
 	Exchange(ctx context.Context, code string) (user *model.User, created bool, err error)
+	// HealthCheck verifies the OIDC provider (Keycloak in dev) is reachable by
+	// requesting its discovery document.
+	HealthCheck(ctx context.Context) error
 }
 
 // AuthService implements Service against any standard OIDC provider discovered
@@ -37,7 +42,13 @@ type AuthService struct {
 	// provider labels the identity source in user_identity; derived from the
 	// issuer so the same subject from a different provider stays distinct.
 	provider string
+	// httpClient probes the issuer's discovery endpoint in HealthCheck.
+	httpClient *http.Client
 }
+
+// healthCheckTimeout bounds a single discovery request in HealthCheck,
+// independent of the caller's context.
+const healthCheckTimeout = 5 * time.Second
 
 // NewAuthService builds an AuthService by performing OIDC discovery against
 // cfg.Auth.IssuerURL. It requires network access to the issuer at startup.
@@ -55,9 +66,31 @@ func NewAuthService(ctx context.Context, cfg *config.Config, pool storage.Pool) 
 			Endpoint:     provider.Endpoint(),
 			Scopes:       []string{oidc.ScopeOpenID, "email", "profile"},
 		},
-		verifier: provider.Verifier(&oidc.Config{ClientID: cfg.Auth.ClientID}),
-		provider: cfg.Auth.IssuerURL,
+		verifier:   provider.Verifier(&oidc.Config{ClientID: cfg.Auth.ClientID}),
+		provider:   cfg.Auth.IssuerURL,
+		httpClient: &http.Client{Timeout: healthCheckTimeout},
 	}, nil
+}
+
+// HealthCheck verifies the OIDC provider is reachable by requesting its
+// discovery document (.well-known/openid-configuration).
+func (s *AuthService) HealthCheck(ctx context.Context) error {
+	url := strings.TrimRight(s.provider, "/") + "/.well-known/openid-configuration"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return fmt.Errorf("building oidc discovery request: %w", err)
+	}
+
+	resp, err := s.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("reaching oidc provider: %w", err)
+	}
+	defer resp.Body.Close() //nolint:errcheck
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("oidc discovery: unexpected status %d", resp.StatusCode)
+	}
+	return nil
 }
 
 // AuthCodeURL returns the provider authorization URL for the given state.

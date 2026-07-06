@@ -107,14 +107,26 @@ const docTemplate = `{
         },
         "/health": {
             "get": {
-                "description": "Returns all health status of all connections",
+                "description": "Probes every infrastructure dependency (Postgres, Qdrant, MinIO, Keycloak, Ollama) and reports each one. Returns 200 when all are healthy and 503 when any is down.",
+                "produces": [
+                    "application/json"
+                ],
                 "tags": [
                     "health"
                 ],
                 "summary": "Get all health status",
                 "responses": {
                     "200": {
-                        "description": "OK"
+                        "description": "All dependencies healthy",
+                        "schema": {
+                            "$ref": "#/definitions/health.Report"
+                        }
+                    },
+                    "503": {
+                        "description": "One or more dependencies are down",
+                        "schema": {
+                            "$ref": "#/definitions/health.Report"
+                        }
                     }
                 }
             }
@@ -420,6 +432,22 @@ const docTemplate = `{
                     "500": {
                         "description": "Internal Server Error"
                     }
+                }
+            }
+        }
+    },
+    "definitions": {
+        "health.Report": {
+            "type": "object",
+            "properties": {
+                "services": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "status": {
+                    "type": "string"
                 }
             }
         }

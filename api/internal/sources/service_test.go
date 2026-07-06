@@ -50,6 +50,8 @@ func (s *stubEmbedder) EmbedBatch(_ context.Context, chunks []embedding.Chunk) (
 	return out, nil
 }
 
+func (s *stubEmbedder) HealthCheck(_ context.Context) error { return nil }
+
 // stubVectorStore discards all writes and returns no-op results.
 // It satisfies vectorstorage.Client without requiring a running Qdrant instance.
 type stubVectorStore struct{}
@@ -85,6 +87,7 @@ func (failingEmbedder) Embed(_ context.Context, _ string) ([]float32, error) {
 func (failingEmbedder) EmbedBatch(_ context.Context, _ []embedding.Chunk) ([]embedding.Embedding, error) {
 	return nil, errors.New("embed batch failed")
 }
+func (failingEmbedder) HealthCheck(_ context.Context) error { return nil }
 
 // errorVectorStore overrides Upsert to return an error; all other methods
 // are inherited from stubVectorStore.

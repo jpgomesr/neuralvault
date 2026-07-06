@@ -92,6 +92,61 @@ func TestEmbed_RequestBody(t *testing.T) {
 	}
 }
 
+func TestHealthCheck_Reachable(t *testing.T) {
+	// newTestClient already serves a valid /api/tags response, so the server is
+	// reachable and HealthCheck should succeed.
+	client := newTestClient(t, func(http.ResponseWriter, *http.Request) {})
+
+	if err := client.HealthCheck(context.Background()); err != nil {
+		t.Fatalf("HealthCheck: %v", err)
+	}
+}
+
+func TestHealthCheck_Unreachable(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/tags", validTagsHandler)
+	srv := httptest.NewServer(mux)
+
+	cfg := &config.Config{Ollama: config.Ollama{URL: srv.URL, EmbeddingModel: "nomic-embed-text"}}
+	client, err := ollama.New(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("ollama.New: %v", err)
+	}
+	srv.Close() // server now refuses connections
+
+	if err := client.HealthCheck(context.Background()); err == nil {
+		t.Fatal("expected an error when the Ollama server is unreachable")
+	}
+}
+
+func TestHealthCheck_UnexpectedStatus(t *testing.T) {
+	// The first /api/tags request (during ollama.New) must succeed so
+	// construction passes; the second (during HealthCheck) returns a 500 to
+	// exercise the "unexpected status" branch.
+	requests := 0
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/tags", func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if requests == 1 {
+			validTagsHandler(w, r)
+			return
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	cfg := &config.Config{Ollama: config.Ollama{URL: srv.URL, EmbeddingModel: "nomic-embed-text"}}
+	client, err := ollama.New(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("ollama.New: %v", err)
+	}
+
+	if err := client.HealthCheck(context.Background()); err == nil {
+		t.Fatal("expected an error when Ollama returns a non-200 status")
+	}
+}
+
 func TestEmbedBatch_Success(t *testing.T) {
 	client := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")

@@ -40,6 +40,8 @@ func (f *fakeService) Exchange(_ context.Context, code string) (*model.User, boo
 	return f.user, f.created, nil
 }
 
+func (f *fakeService) HealthCheck(_ context.Context) error { return nil }
+
 // cookieByName returns the last Set-Cookie with the given name, or nil.
 func cookieByName(rec *httptest.ResponseRecorder, name string) *http.Cookie {
 	var found *http.Cookie

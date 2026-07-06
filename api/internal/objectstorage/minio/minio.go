@@ -119,6 +119,17 @@ func (c *Client) ListObjects(ctx context.Context, prefix string) ([]string, erro
 	return keys, nil
 }
 
+// HealthCheck verifies MinIO is reachable and the configured bucket is
+// accessible with the current credentials by issuing a HeadBucket request.
+func (c *Client) HealthCheck(ctx context.Context) error {
+	if _, err := c.s3.HeadBucket(ctx, &s3.HeadBucketInput{
+		Bucket: aws.String(c.bucket),
+	}); err != nil {
+		return fmt.Errorf("minio health: %w", err)
+	}
+	return nil
+}
+
 // Delete removes the object at key.
 func (c *Client) Delete(ctx context.Context, key string) error {
 	if _, err := c.s3.DeleteObject(ctx, &s3.DeleteObjectInput{

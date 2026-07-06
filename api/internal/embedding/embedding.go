@@ -30,6 +30,10 @@ type Embedder interface {
 	// Prefer this over repeated Embed calls to minimise round-trips to the provider.
 	// If chunks is empty, implementations should return an empty slice and no error.
 	EmbedBatch(ctx context.Context, chunks []Chunk) ([]Embedding, error)
+
+	// HealthCheck verifies the embedding backend is reachable. It reports only
+	// reachability, not model availability, so it stays cheap enough for /health.
+	HealthCheck(ctx context.Context) error
 }
 
 // NewEmbedder creates and returns an Embedder backed by the configured provider.

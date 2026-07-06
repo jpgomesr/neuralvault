@@ -1,6 +1,9 @@
 package router
 
 import (
+	"context"
+	"time"
+
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	_ "github.com/jpgomesr/NeuralVault/docs"
@@ -27,7 +30,16 @@ func NewRouter(cfg *config.Config, pool storage.Pool, store objectstorage.Client
 	r.Use(middleware.RequestID)
 	r.Use(requestLogging)
 
-	healthService := health.HealthService{}
+	healthService := health.NewHealthService(3*time.Second,
+		health.Check{Name: "postgres", Fn: pool.Ping},
+		health.Check{Name: "qdrant", Fn: func(ctx context.Context) error {
+			_, err := vectorStore.HealthCheck(ctx)
+			return err
+		}},
+		health.Check{Name: "minio", Fn: store.HealthCheck},
+		health.Check{Name: "ollama", Fn: embedder.HealthCheck},
+		health.Check{Name: "keycloak", Fn: authService.HealthCheck},
+	)
 	healthHandler := health.NewHandler(healthService)
 
 	splitters := map[chunking.ContentType]chunking.Splitter{

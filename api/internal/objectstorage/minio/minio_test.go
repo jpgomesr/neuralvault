@@ -118,6 +118,33 @@ func TestNewClient_Factory(t *testing.T) {
 	}
 }
 
+func TestClient_HealthCheck(t *testing.T) {
+	c, err := localminio.New(context.Background(), sharedCfg)
+	if err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+	if err := c.HealthCheck(context.Background()); err != nil {
+		t.Fatalf("HealthCheck: %v", err)
+	}
+}
+
+// TestClient_HealthCheck_ContextCanceled exercises HealthCheck's error path:
+// an already-canceled context makes the underlying HeadBucket call fail
+// without needing to break the MinIO container itself.
+func TestClient_HealthCheck_ContextCanceled(t *testing.T) {
+	c, err := localminio.New(context.Background(), sharedCfg)
+	if err != nil {
+		t.Fatalf("setup: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if err := c.HealthCheck(ctx); err == nil {
+		t.Fatal("expected an error when the context is already canceled")
+	}
+}
+
 func TestClient_UploadDownloadDelete(t *testing.T) {
 	c, err := localminio.New(context.Background(), sharedCfg)
 	if err != nil {

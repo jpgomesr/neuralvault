@@ -1,18 +1,14 @@
 package health
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
 )
 
 type Service interface {
-	AllHealth() (ConnectionHealth, error)
-}
-
-type ConnectionHealth struct {
-	Server   string `json:"server"`
-	Database string `json:"database"`
+	AllHealth(ctx context.Context) Report
 }
 
 type Handler struct {
@@ -28,29 +24,27 @@ func NewHandler(service Service) *Handler {
 // GetHealth godoc
 //
 // @Summary Get all health status
-// @Description Returns all health status of all connections
+// @Description Probes every infrastructure dependency (Postgres, Qdrant, MinIO, Keycloak, Ollama) and reports each one. Returns 200 when all are healthy and 503 when any is down.
 // @Tags health
-// @Success 200
+// @Produce json
+// @Success 200 {object} Report "All dependencies healthy"
+// @Failure 503 {object} Report "One or more dependencies are down"
 // @Router /health [get]
 func (h *Handler) GetHealth(w http.ResponseWriter, r *http.Request) {
-	connection, err := h.service.AllHealth()
-	if err != nil {
-		slog.Error(
-			"error getting all health connection ",
-			"err", err,
-		)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+	report := h.service.AllHealth(r.Context())
+
+	status := http.StatusOK
+	if !report.Healthy() {
+		status = http.StatusServiceUnavailable
 	}
 
 	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
 
-	if err := json.NewEncoder(w).Encode(connection); err != nil {
+	if err := json.NewEncoder(w).Encode(report); err != nil {
 		slog.Error(
-			"error encoding all health connection ",
+			"error encoding health report",
 			"err", err,
 		)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
 	}
 }

@@ -44,6 +44,27 @@ func New(ctx context.Context, cfg *config.Config) (*Client, error) {
 	return c, nil
 }
 
+// HealthCheck verifies the Ollama server is reachable by requesting its tags
+// endpoint. It deliberately checks only reachability (HTTP 200), not whether
+// the configured model is present, so it stays cheap enough for /health.
+func (c *Client) HealthCheck(ctx context.Context) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/api/tags", nil)
+	if err != nil {
+		return fmt.Errorf("building ollama health request: %w", err)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("reaching ollama: %w", err)
+	}
+	defer resp.Body.Close() //nolint:errcheck
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("ollama health: unexpected status %d", resp.StatusCode)
+	}
+	return nil
+}
+
 type tagsResponse struct {
 	Models []struct {
 		Name string `json:"name"`

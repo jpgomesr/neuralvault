@@ -44,6 +44,8 @@ func (f fixedEmbedder) EmbedBatch(_ context.Context, chunks []embedding.Chunk) (
 	return out, nil
 }
 
+func (fixedEmbedder) HealthCheck(_ context.Context) error { return nil }
+
 // failingEmbedder always returns an error from Embed.
 type failingEmbedder struct{}
 
@@ -53,6 +55,7 @@ func (failingEmbedder) Embed(_ context.Context, _ string) ([]float32, error) {
 func (failingEmbedder) EmbedBatch(_ context.Context, _ []embedding.Chunk) ([]embedding.Embedding, error) {
 	return nil, errors.New("embed batch failed")
 }
+func (failingEmbedder) HealthCheck(_ context.Context) error { return nil }
 
 // fakeVectorStore lets a test control exactly what Query returns, so branches
 // downstream of the Qdrant response (invalid point IDs, cross-workspace
