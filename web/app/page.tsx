@@ -26,6 +26,7 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- loads workspaces once `me` resolves
     if (me) void loadWorkspaces();
   }, [me, loadWorkspaces]);
 
