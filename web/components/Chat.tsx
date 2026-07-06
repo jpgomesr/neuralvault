@@ -24,6 +24,7 @@ export default function Chat({ workspaceId }: { workspaceId: string }) {
 
   // Reset the conversation when the workspace changes.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- resets local state on workspace switch
     setMessages([]);
   }, [workspaceId]);
 

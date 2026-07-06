@@ -25,6 +25,7 @@ export default function Sidebar({ workspaceId }: { workspaceId: string }) {
   }, [workspaceId]);
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- resets local state before refreshing sources
     setSources([]);
     setLiveStatus({});
     void refresh();
