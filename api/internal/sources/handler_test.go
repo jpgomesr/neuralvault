@@ -50,6 +50,24 @@ func (f *fakeService) GetByID(_ context.Context, _ uuid.UUID) (*model.Source, er
 	return f.source, f.err
 }
 
+// fakeMembers is a test double for workspaces.Service controlling whether the
+// caller is treated as a member of the request's workspace.
+type fakeMembers struct {
+	member bool
+	err    error
+}
+
+func (f fakeMembers) Create(context.Context, uuid.UUID, string) (*model.Workspace, error) {
+	return nil, nil
+}
+func (f fakeMembers) List(context.Context, uuid.UUID) ([]model.Workspace, error) { return nil, nil }
+func (f fakeMembers) IsMember(context.Context, uuid.UUID, uuid.UUID) (bool, error) {
+	return f.member, f.err
+}
+
+// allowMembers returns a members double that treats every caller as a member.
+func allowMembers() fakeMembers { return fakeMembers{member: true} }
+
 // routedRequest attaches Chi URL params to an httptest request.
 func routedRequest(method, target string, params map[string]string, body io.Reader) *http.Request {
 	r := httptest.NewRequest(method, target, body)
@@ -94,7 +112,7 @@ func sourceWithStatus(status model.SourceStatus) *model.Source {
 
 func TestCreateSource_Success(t *testing.T) {
 	src := sourceWithStatus(model.SourceStatusIndexing)
-	h := NewHandler(&fakeService{source: src}, NewProgressBus())
+	h := NewHandler(&fakeService{source: src}, NewProgressBus(), allowMembers())
 
 	r := multipartUpload(map[string]string{
 		"workspace_id": "11111111-1111-1111-1111-111111111111",
@@ -119,8 +137,35 @@ func TestCreateSource_Success(t *testing.T) {
 	}
 }
 
+func TestCreateSource_ForbiddenWhenNotMember(t *testing.T) {
+	h := NewHandler(&fakeService{source: sourceWithStatus(model.SourceStatusIndexing)}, NewProgressBus(), fakeMembers{member: false})
+
+	r := multipartUpload(map[string]string{
+		"workspace_id": "11111111-1111-1111-1111-111111111111",
+		"name":         "Someone else's vault",
+	}, "notes.md", "# Hello")
+	w := httptest.NewRecorder()
+	h.CreateSource(w, r)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestListSources_ForbiddenWhenNotMember(t *testing.T) {
+	h := NewHandler(&fakeService{}, NewProgressBus(), fakeMembers{member: false})
+
+	r := httptest.NewRequest(http.MethodGet, "/sources?workspace_id=11111111-1111-1111-1111-111111111111", nil)
+	w := httptest.NewRecorder()
+	h.ListSources(w, r)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
 func TestCreateSource_InvalidWorkspaceID(t *testing.T) {
-	h := NewHandler(&fakeService{}, NewProgressBus())
+	h := NewHandler(&fakeService{}, NewProgressBus(), allowMembers())
 
 	r := multipartUpload(map[string]string{
 		"workspace_id": "not-a-uuid",
@@ -135,7 +180,7 @@ func TestCreateSource_InvalidWorkspaceID(t *testing.T) {
 }
 
 func TestCreateSource_MissingName(t *testing.T) {
-	h := NewHandler(&fakeService{}, NewProgressBus())
+	h := NewHandler(&fakeService{}, NewProgressBus(), allowMembers())
 
 	r := multipartUpload(map[string]string{
 		"workspace_id": "11111111-1111-1111-1111-111111111111",
@@ -149,7 +194,7 @@ func TestCreateSource_MissingName(t *testing.T) {
 }
 
 func TestCreateSource_NoFiles(t *testing.T) {
-	h := NewHandler(&fakeService{}, NewProgressBus())
+	h := NewHandler(&fakeService{}, NewProgressBus(), allowMembers())
 
 	r := multipartUpload(map[string]string{
 		"workspace_id": "11111111-1111-1111-1111-111111111111",
@@ -164,7 +209,7 @@ func TestCreateSource_NoFiles(t *testing.T) {
 }
 
 func TestCreateSource_ServiceError(t *testing.T) {
-	h := NewHandler(&fakeService{err: errTest("create failed")}, NewProgressBus())
+	h := NewHandler(&fakeService{err: errTest("create failed")}, NewProgressBus(), allowMembers())
 
 	r := multipartUpload(map[string]string{
 		"workspace_id": "11111111-1111-1111-1111-111111111111",
@@ -182,7 +227,7 @@ func TestCreateSource_ServiceError(t *testing.T) {
 
 func TestListSources_Success(t *testing.T) {
 	src := sourceWithStatus(model.SourceStatusIndexed)
-	h := NewHandler(&fakeService{source: src}, NewProgressBus())
+	h := NewHandler(&fakeService{source: src}, NewProgressBus(), allowMembers())
 
 	r := httptest.NewRequest(http.MethodGet, "/sources?workspace_id=11111111-1111-1111-1111-111111111111", nil)
 	w := httptest.NewRecorder()
@@ -202,7 +247,7 @@ func TestListSources_Success(t *testing.T) {
 }
 
 func TestListSources_InvalidWorkspaceID(t *testing.T) {
-	h := NewHandler(&fakeService{}, NewProgressBus())
+	h := NewHandler(&fakeService{}, NewProgressBus(), allowMembers())
 
 	r := httptest.NewRequest(http.MethodGet, "/sources?workspace_id=bad", nil)
 	w := httptest.NewRecorder()
@@ -214,7 +259,7 @@ func TestListSources_InvalidWorkspaceID(t *testing.T) {
 }
 
 func TestListSources_ServiceError(t *testing.T) {
-	h := NewHandler(&fakeService{err: errTest("db error")}, NewProgressBus())
+	h := NewHandler(&fakeService{err: errTest("db error")}, NewProgressBus(), allowMembers())
 
 	r := httptest.NewRequest(http.MethodGet, "/sources?workspace_id=11111111-1111-1111-1111-111111111111", nil)
 	w := httptest.NewRecorder()
@@ -228,7 +273,7 @@ func TestListSources_ServiceError(t *testing.T) {
 // ── IngestSource ─────────────────────────────────────────────────────────────
 
 func TestIngestSource_Success(t *testing.T) {
-	h := NewHandler(&fakeService{}, NewProgressBus())
+	h := NewHandler(&fakeService{}, NewProgressBus(), allowMembers())
 	id := uuid.New()
 
 	r := routedRequest(http.MethodPost, "/sources/"+id.String()+"/ingest",
@@ -242,7 +287,7 @@ func TestIngestSource_Success(t *testing.T) {
 }
 
 func TestIngestSource_InvalidID(t *testing.T) {
-	h := NewHandler(&fakeService{}, NewProgressBus())
+	h := NewHandler(&fakeService{}, NewProgressBus(), allowMembers())
 
 	r := routedRequest(http.MethodPost, "/sources/bad/ingest", map[string]string{"id": "bad"}, nil)
 	w := httptest.NewRecorder()
@@ -254,7 +299,7 @@ func TestIngestSource_InvalidID(t *testing.T) {
 }
 
 func TestIngestSource_ServiceError(t *testing.T) {
-	h := NewHandler(&fakeService{err: errTest("ingest error")}, NewProgressBus())
+	h := NewHandler(&fakeService{err: errTest("ingest error")}, NewProgressBus(), allowMembers())
 	id := uuid.New()
 
 	r := routedRequest(http.MethodPost, "/sources/"+id.String()+"/ingest",
@@ -271,7 +316,7 @@ func TestIngestSource_ServiceError(t *testing.T) {
 
 func TestListChunks_Success(t *testing.T) {
 	chunks := []model.Chunk{{ID: uuid.New(), Content: "hello"}}
-	h := NewHandler(&fakeService{chunks: chunks}, NewProgressBus())
+	h := NewHandler(&fakeService{chunks: chunks}, NewProgressBus(), allowMembers())
 	id := uuid.New()
 
 	r := routedRequest(http.MethodGet, "/sources/"+id.String()+"/chunks",
@@ -293,7 +338,7 @@ func TestListChunks_Success(t *testing.T) {
 }
 
 func TestListChunks_InvalidID(t *testing.T) {
-	h := NewHandler(&fakeService{}, NewProgressBus())
+	h := NewHandler(&fakeService{}, NewProgressBus(), allowMembers())
 
 	r := routedRequest(http.MethodGet, "/sources/bad/chunks", map[string]string{"id": "bad"}, nil)
 	w := httptest.NewRecorder()
@@ -305,7 +350,7 @@ func TestListChunks_InvalidID(t *testing.T) {
 }
 
 func TestListChunks_ServiceError(t *testing.T) {
-	h := NewHandler(&fakeService{err: errTest("db error")}, NewProgressBus())
+	h := NewHandler(&fakeService{err: errTest("db error")}, NewProgressBus(), allowMembers())
 	id := uuid.New()
 
 	r := routedRequest(http.MethodGet, "/sources/"+id.String()+"/chunks",
@@ -321,7 +366,7 @@ func TestListChunks_ServiceError(t *testing.T) {
 // ── StreamStatus ─────────────────────────────────────────────────────────────
 
 func TestStreamStatus_InvalidID(t *testing.T) {
-	h := NewHandler(&fakeService{}, NewProgressBus())
+	h := NewHandler(&fakeService{}, NewProgressBus(), allowMembers())
 
 	r := routedRequest(http.MethodGet, "/sources/bad/status", map[string]string{"id": "bad"}, nil)
 	w := httptest.NewRecorder()
@@ -333,7 +378,7 @@ func TestStreamStatus_InvalidID(t *testing.T) {
 }
 
 func TestStreamStatus_SourceNotFound(t *testing.T) {
-	h := NewHandler(&fakeService{err: errTest("not found")}, NewProgressBus())
+	h := NewHandler(&fakeService{err: errTest("not found")}, NewProgressBus(), allowMembers())
 	id := uuid.New()
 
 	r := routedRequest(http.MethodGet, "/sources/"+id.String()+"/status",
@@ -348,7 +393,7 @@ func TestStreamStatus_SourceNotFound(t *testing.T) {
 
 func TestStreamStatus_AlreadyIndexed(t *testing.T) {
 	src := sourceWithStatus(model.SourceStatusIndexed)
-	h := NewHandler(&fakeService{source: src}, NewProgressBus())
+	h := NewHandler(&fakeService{source: src}, NewProgressBus(), allowMembers())
 
 	r := routedRequest(http.MethodGet, "/sources/"+src.ID.String()+"/status",
 		map[string]string{"id": src.ID.String()}, nil)
@@ -363,7 +408,7 @@ func TestStreamStatus_AlreadyIndexed(t *testing.T) {
 
 func TestStreamStatus_AlreadyErrored(t *testing.T) {
 	src := sourceWithStatus(model.SourceStatusError)
-	h := NewHandler(&fakeService{source: src}, NewProgressBus())
+	h := NewHandler(&fakeService{source: src}, NewProgressBus(), allowMembers())
 
 	r := routedRequest(http.MethodGet, "/sources/"+src.ID.String()+"/status",
 		map[string]string{"id": src.ID.String()}, nil)
@@ -381,7 +426,7 @@ func TestStreamStatus_AlreadyErrored(t *testing.T) {
 func TestStreamStatus_LiveEvents(t *testing.T) {
 	bus := NewProgressBus()
 	src := sourceWithStatus(model.SourceStatusIndexing)
-	h := NewHandler(&fakeService{source: src}, bus)
+	h := NewHandler(&fakeService{source: src}, bus, allowMembers())
 
 	router := chi.NewRouter()
 	router.Get("/{id}/status", h.StreamStatus)

@@ -12,17 +12,20 @@ import (
 	"github.com/google/uuid"
 	"github.com/jpgomesr/NeuralVault/internal/logger"
 	"github.com/jpgomesr/NeuralVault/internal/model"
+	"github.com/jpgomesr/NeuralVault/internal/workspaces"
 )
 
 // Handler holds HTTP handler methods for the sources domain.
 type Handler struct {
 	service Service
 	bus     *ProgressBus
+	members workspaces.Service
 }
 
-// NewHandler returns a Handler backed by service and bus.
-func NewHandler(service Service, bus *ProgressBus) *Handler {
-	return &Handler{service: service, bus: bus}
+// NewHandler returns a Handler backed by service and bus. members enforces
+// that the caller belongs to the workspace named in each request.
+func NewHandler(service Service, bus *ProgressBus, members workspaces.Service) *Handler {
+	return &Handler{service: service, bus: bus, members: members}
 }
 
 // CreateSource handles POST /sources.
@@ -39,6 +42,10 @@ func (h *Handler) CreateSource(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		slog.WarnContext(r.Context(), "invalid create source request", "err", "invalid workspace_id", "request_id", logger.RequestID(r.Context()))
 		http.Error(w, "invalid workspace_id: must be a UUID", http.StatusBadRequest)
+		return
+	}
+
+	if !workspaces.EnsureMember(w, r, h.members, workspaceID) {
 		return
 	}
 
@@ -96,6 +103,10 @@ func (h *Handler) ListSources(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		slog.WarnContext(r.Context(), "invalid list sources request", "err", "invalid workspace_id", "request_id", logger.RequestID(r.Context()))
 		http.Error(w, "invalid workspace_id: must be a UUID", http.StatusBadRequest)
+		return
+	}
+
+	if !workspaces.EnsureMember(w, r, h.members, workspaceID) {
 		return
 	}
 
