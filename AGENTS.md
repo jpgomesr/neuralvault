@@ -28,6 +28,21 @@ go build ./cmd/server        # build
 golangci-lint run            # lint
 ```
 
+### Frontend (web)
+
+Thin Next.js (App Router, TypeScript) client. Requires the API running (proxied via `/api/*`). Sign in with the bundled Keycloak dev user `dev` / `dev`.
+
+```bash
+cd web
+npm install
+npm run dev                  # http://localhost:3000
+npm run lint                 # next lint
+npm run type-check           # tsc --noEmit
+npm run build                # production build
+```
+
+`next.config.mjs` rewrites `/api/*` to the API (`API_BASE_URL`, default `http://localhost:8080`) so browser and API share an origin — the session cookie is first-party and no CORS is needed.
+
 ### Environment setup
 
 ```bash
@@ -130,9 +145,12 @@ Table-driven tests with `t.Run`. Config tests must call `resetGlobals()` (define
 - Retrieval engine (`internal/retrieval/`) — `Retriever` interface + `RetrievalService`; `POST /query` embeds the question, runs a workspace-filtered `Query` against Qdrant, and hydrates the top-k chunks from Postgres ordered by score (see [SPEC-006](docs/specs/SPEC-006-retrieval-engine.md))
 - CLI (`cmd/cli/`) — minimal `ingest`/`query` commands that talk to the API as a plain HTTP client (no `internal/*` imports); `make build-cli` builds `dist/nv` (falls back to `dist/neuralvault` if `nv` is already on `PATH`), `make run-cli ARGS=...` runs it via `go run`
 - LLM provider (`internal/llm/`) — `Provider` interface + Ollama-backed implementation (`internal/llm/ollama/`) for chat completion (`Complete` and `Stream`); `llm.NewProvider` factory mirrors `embedding.NewEmbedder`; shared types in `llm/types/` break the import cycle (see [SPEC-007](docs/specs/SPEC-007-llm-provider-layer.md))
+- Auth + identity (`internal/auth/`) — OIDC authorization-code login (Keycloak in dev, any OIDC provider by `AUTH_` config), JIT user provisioning, HMAC-signed `nv_session` cookie, and `RequireUser` middleware; `/auth/*` routes, with `/sources`/`/query`/`/workspaces` protected (see [SPEC-011](docs/specs/SPEC-011-auth-workspaces-tenant-isolation.md))
+- Workspaces + tenant isolation (`internal/workspaces/`) — `POST`/`GET /workspaces` plus an `EnsureMember` guard enforcing membership (403) on every workspace-scoped route
+- Streaming answers — `POST /query/stream` runs retrieval, builds a RAG prompt, and streams a grounded LLM answer over SSE (`sources`/`token`/`done` events); non-streaming `POST /query` remains for the CLI
+- Frontend (`web/`) — thin Next.js (App Router, TypeScript) chat client: OIDC sign-in gate, workspace switcher, streaming chat, and file upload with live indexing status; proxies `/api/*` to the API (see `web/README.md`)
 
 ### In progress
 
 ### Not started
-- Cloud LLM providers (OpenAI, Claude, Gemini) and a chat/SSE domain wiring `llm.Provider` into `/query`
-- Frontend
+- Cloud LLM providers (OpenAI, Claude, Gemini)
