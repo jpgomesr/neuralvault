@@ -3,6 +3,7 @@ package health
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -13,6 +14,12 @@ import (
 type fakeService struct{ report Report }
 
 func (f fakeService) AllHealth(context.Context) Report { return f.report }
+
+// failingWriter wraps a ResponseWriter but fails every Write, exercising
+// GetHealth's JSON-encoding error path.
+type failingWriter struct{ http.ResponseWriter }
+
+func (failingWriter) Write([]byte) (int, error) { return 0, errors.New("write failed") }
 
 func TestGetHealth(t *testing.T) {
 	tests := []struct {
@@ -65,4 +72,18 @@ func TestGetHealth(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestGetHealth_EncodeError verifies a write failure during JSON encoding is
+// handled gracefully (logged, no panic) rather than propagated.
+func TestGetHealth_EncodeError(t *testing.T) {
+	h := NewHandler(fakeService{report: Report{
+		Status:   StatusOK,
+		Services: map[string]string{"server": StatusOK},
+	}})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+
+	h.GetHealth(failingWriter{ResponseWriter: rec}, req)
 }

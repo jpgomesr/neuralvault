@@ -249,4 +249,14 @@ func TestHealthCheck(t *testing.T) {
 			t.Fatal("expected an error when the provider is unreachable")
 		}
 	})
+
+	t.Run("malformed issuer URL fails building the request", func(t *testing.T) {
+		// A raw control character makes the concatenated URL invalid, so
+		// http.NewRequestWithContext itself errors before any network call.
+		s := &AuthService{provider: "http://issuer.test/\n", httpClient: http.DefaultClient}
+
+		if err := s.HealthCheck(context.Background()); err == nil {
+			t.Fatal("expected an error for a malformed issuer URL")
+		}
+	})
 }
