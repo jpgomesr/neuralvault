@@ -69,31 +69,28 @@ ollama pull nomic-embed-text
 
 ### 3. Start infrastructure services
 
-This starts Qdrant, PostgreSQL, and Ollama via Docker Compose, without the application itself:
+This starts the backing services via Docker Compose, without the application itself — Postgres, Qdrant, Ollama, MinIO (object storage), and Keycloak (OIDC identity provider):
 
 ```bash
-docker compose up -d qdrant postgres ollama
+docker compose up -d          # or: make up
 ```
 
 ### 4. Set up environment variables
 
+There are three env templates — repo root (Docker Compose), `api/` (Go API), and `web/` (frontend, optional):
+
 ```bash
-cp .env.example .env          # Docker Compose (ports, service credentials)
-cp api/.env.example api/.env  # Go API config
+cp .env.example .env                # Docker Compose (ports, service credentials)
+cp api/.env.example api/.env        # Go API config
+cp web/.env.example web/.env.local  # Frontend (optional — defaults work as-is)
 ```
 
-Edit `api/.env` with your local values. At minimum you need:
-
-```env
-DATABASE_URL=postgres://postgres:postgres@localhost:5432/neuralvault
-QDRANT_URL=http://localhost:6333
-OLLAMA_URL=http://localhost:11434
-```
+The defaults line up with what Docker Compose starts, so for a standard setup **no changes are required**. Config uses `<PREFIX>_<FIELD>` variables (`SERVER_`, `POSTGRES_`, `QDRANT_`, `OLLAMA_`, `MINIO_`, `AUTH_`) — the `AUTH_` group defaults to the bundled Keycloak dev realm. See `api/.env.example` for the full list, including cloud LLM provider keys.
 
 ### 5. Run database migrations
 
 ```bash
-make migrate
+make migrate-up
 ```
 
 ### 6. Start the backend
@@ -113,7 +110,7 @@ npm install
 npm run dev
 ```
 
-The UI will be available at `http://localhost:3000`.
+The UI will be available at `http://localhost:3000`. On first load you're redirected to Keycloak to sign in via OIDC — the dev realm ships a seeded `dev` / `dev` user (see [getting-started](getting-started.md) for the full walkthrough).
 
 ---
 
@@ -122,34 +119,43 @@ The UI will be available at `http://localhost:3000`.
 ```
 NeuralVault/
 ├── api/                        # Go backend
-│   ├── cmd/server/             # Entry point (main.go)
+│   ├── cmd/
+│   │   ├── server/             # API entry point (main.go)
+│   │   ├── migrate/            # Migration runner (goose)
+│   │   └── cli/                # nv CLI — talks to the API over HTTP
 │   ├── internal/
 │   │   ├── config/             # Config loading and validation
+│   │   ├── auth/               # OIDC login, JIT provisioning, session + RequireUser middleware
+│   │   ├── workspaces/         # Workspace management + tenant-isolation guard
+│   │   ├── sources/            # Source upload/ingest endpoints + ingestion pipeline
+│   │   ├── sourcereader/       # Reads files into chunk requests
+│   │   ├── retrieval/          # Query + streaming grounded answers
 │   │   ├── embedding/          # Embedder interface and domain types
-│   │   │   ├── embedding.go    # Embedder interface, Chunk, Embedding types
-│   │   │   ├── ollama/         # Ollama implementation (planned)
-│   │   │   └── openai/         # OpenAI implementation (planned)
+│   │   │   ├── embedding.go    # Embedder interface
+│   │   │   ├── types/          # Shared value types (breaks import cycle)
+│   │   │   └── ollama/         # Ollama implementation (nomic-embed-text)
 │   │   ├── llm/                # LLM provider interface and domain types
-│   │   │   ├── llm.go          # Provider interface, Message, CompletionRequest types
-│   │   │   ├── openai/         # OpenAI implementation (planned)
-│   │   │   ├── claude/         # Claude implementation (planned)
-│   │   │   ├── gemini/         # Gemini implementation (planned)
-│   │   │   └── ollama/         # Ollama implementation (planned)
+│   │   │   ├── llm.go          # Provider interface
+│   │   │   ├── types/          # Shared value types (breaks import cycle)
+│   │   │   └── ollama/         # Ollama implementation (OpenAI/Claude/Gemini planned)
 │   │   ├── chunking/           # Text splitting
 │   │   │   ├── chunking.go     # Splitter interface and Span type
 │   │   │   ├── service.go      # ChunkService — ChunkSource, ListChunks, DeleteChunks
 │   │   │   ├── markdown/       # Markdown section splitter
 │   │   │   └── text/           # Plain-text splitter
-│   │   ├── health/             # System health status
-│   │   │   ├── handler.go      # HTTP handler
-│   │   │   ├── service.go      # Business logic interface and implementation
-│   │   │   └── routes.go       # Chi subrouter
+│   │   ├── vectorstorage/      # Qdrant client
+│   │   ├── objectstorage/      # MinIO (S3-compatible) client
+│   │   ├── storage/            # Postgres pool
+│   │   │   └── postgres/migrations/  # SQL migrations
+│   │   ├── health/             # System health status (handler/service/routes)
+│   │   ├── model/              # Shared domain models
 │   │   ├── logger/             # Global logger initialisation
 │   │   └── router/             # Chi router wiring and top-level route mounting
-│   └── migrations/             # PostgreSQL migrations
-├── web/                        # Next.js frontend
+├── web/                        # Next.js frontend (App Router, TypeScript)
+├── docker/keycloak/import/     # Keycloak dev realm (auto-imported)
 ├── docs/                       # Documentation
-│   └── adr/                    # Architecture decision records
+│   ├── adr/                    # Architecture decision records
+│   └── specs/                  # Technical specs (SPEC-NNN)
 └── docker-compose.yml
 ```
 
@@ -176,7 +182,7 @@ When adding a new provider:
 2. Implement every method of the interface defined in the parent package.
 3. Wire the concrete type in `cmd/server/main.go` — nowhere else.
 
-### Feature domains (`health/`, and future endpoint domains)
+### Feature domains (`health/`, `auth/`, `workspaces/`, `sources/`, `retrieval/`, …)
 
 Each feature domain exposes exactly three files:
 
@@ -212,10 +218,10 @@ Branch off `main` using this naming convention:
 
 ```bash
 # Backend tests
-cd api && go test ./...
+cd api && go test ./...          # or: go test ./... -race (matches CI)
 
-# Frontend tests
-cd web && npm run test
+# Frontend type checking (no unit-test suite yet)
+cd web && npm run type-check
 ```
 
 ### Linting
