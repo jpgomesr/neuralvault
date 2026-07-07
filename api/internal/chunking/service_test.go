@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"strconv"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -14,9 +14,16 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jackc/pgx/v5/stdlib"
+	"github.com/pressly/goose/v3"
+	"github.com/testcontainers/testcontainers-go"
+	"github.com/testcontainers/testcontainers-go/wait"
+
 	"github.com/jpgomesr/NeuralVault/internal/chunking"
 	chunkmd "github.com/jpgomesr/NeuralVault/internal/chunking/markdown"
+	"github.com/jpgomesr/NeuralVault/internal/config"
 	"github.com/jpgomesr/NeuralVault/internal/model"
+	pgstore "github.com/jpgomesr/NeuralVault/internal/storage/postgres"
 )
 
 // fakeTx is a minimal pgx.Tx fake: it embeds a nil pgx.Tx so unimplemented
@@ -64,95 +71,90 @@ func (p *fakePool) Begin(_ context.Context) (pgx.Tx, error) {
 func (p *fakePool) Ping(_ context.Context) error { return nil }
 func (p *fakePool) Close()                       {}
 
-// integrationPool returns a live pgxpool connection, or skips the test when
-// POSTGRES_HOST is not set (matches the pattern in storage/postgres/postgres_test.go).
-func integrationPool(t *testing.T) *pgxpool.Pool {
-	t.Helper()
-	if os.Getenv("POSTGRES_HOST") == "" {
-		t.Skip("POSTGRES_HOST not set; skipping chunking service integration test")
-	}
+// sharedPool is a live connection to an ephemeral Postgres container, started
+// once for the whole package in TestMain and torn down afterwards.
+var sharedPool *pgxpool.Pool
 
-	port := 5432
-	if p := os.Getenv("POSTGRES_PORT"); p != "" {
-		if n, err := strconv.Atoi(p); err == nil {
-			port = n
-		}
-	}
-	dsn := fmt.Sprintf(
-		"host=%s port=%d user=%s password=%s dbname=%s sslmode=disable",
-		getenv("POSTGRES_HOST", "localhost"),
-		port,
-		getenv("POSTGRES_USERNAME", "neuralvault"),
-		getenv("POSTGRES_PASSWORD", "neuralvault"),
-		getenv("POSTGRES_NAME", "neuralvault"),
-	)
-	pool, err := pgxpool.New(context.Background(), dsn)
-	if err != nil {
-		t.Fatalf("creating pool: %v", err)
-	}
-	t.Cleanup(pool.Close)
-	return pool
+func TestMain(m *testing.M) {
+	os.Exit(runTests(m))
 }
 
-func getenv(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
-}
-
-// setupSchema creates the tables required by ChunkService in idempotent fashion.
-// Enum types use a DO block because PostgreSQL has no CREATE TYPE IF NOT EXISTS.
-const setupSchema = `
-DO $$ BEGIN
-    CREATE TYPE source_type AS ENUM ('git', 'file', 'web');
-EXCEPTION WHEN duplicate_object THEN null;
-END $$;
-
-DO $$ BEGIN
-    CREATE TYPE source_status AS ENUM ('pending', 'indexing', 'indexed', 'error');
-EXCEPTION WHEN duplicate_object THEN null;
-END $$;
-
-CREATE TABLE IF NOT EXISTS workspace (
-    id         UUID PRIMARY KEY,
-    name       TEXT NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE TABLE IF NOT EXISTS sources (
-    id           UUID PRIMARY KEY,
-    workspace_id UUID NOT NULL REFERENCES workspace(id) ON DELETE CASCADE,
-    name         TEXT NOT NULL,
-    type         source_type NOT NULL,
-    uri          TEXT NOT NULL,
-    status       source_status NOT NULL DEFAULT 'pending',
-    metadata     JSONB,
-    created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE TABLE IF NOT EXISTS chunks (
-    id              UUID PRIMARY KEY,
-    source_id       UUID NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
-    workspace_id    UUID NOT NULL REFERENCES workspace(id) ON DELETE CASCADE,
-    content         TEXT NOT NULL,
-    chunk_index     INT NOT NULL,
-    metadata        JSONB,
-    embedding_model TEXT NOT NULL,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (source_id, chunk_index)
-);
-`
-
-func TestChunkService(t *testing.T) {
-	pool := integrationPool(t)
+// runTests spins up a throwaway postgres:17 container, applies the goose
+// migrations, and runs the package's tests against it. This mirrors the
+// testcontainers pattern used across the rest of the API test suite, so the
+// integration tests need only Docker — no externally-provisioned Postgres.
+func runTests(m *testing.M) int {
 	ctx := context.Background()
 
-	if _, err := pool.Exec(ctx, setupSchema); err != nil {
-		t.Fatalf("applying schema: %v", err)
+	ctr, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
+		ContainerRequest: testcontainers.ContainerRequest{
+			Image:        "postgres:17",
+			ExposedPorts: []string{"5432/tcp"},
+			Env: map[string]string{
+				"POSTGRES_USER":     "neuralvault",
+				"POSTGRES_PASSWORD": "neuralvault",
+				"POSTGRES_DB":       "neuralvault",
+			},
+			WaitingFor: wait.ForLog("database system is ready to accept connections").WithOccurrence(2),
+		},
+		Started: true,
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "start postgres: %v\n", err)
+		return 1
 	}
+	defer func() { _ = ctr.Terminate(ctx) }()
+
+	host, err := ctr.Host(ctx)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "postgres host: %v\n", err)
+		return 1
+	}
+	port, err := ctr.MappedPort(ctx, "5432")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "postgres port: %v\n", err)
+		return 1
+	}
+
+	sharedPool, err = pgstore.NewPool(ctx, config.Config{
+		Postgres: config.Postgres{
+			Host:     host,
+			Port:     int(port.Num()),
+			Username: "neuralvault",
+			Password: "neuralvault",
+			Name:     "neuralvault",
+			SSLMode:  "disable",
+			MaxConns: 10,
+			MinConns: 1,
+		},
+	})
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "create pool: %v\n", err)
+		return 1
+	}
+	defer sharedPool.Close()
+
+	// Run migrations via goose so the sources/chunks tables exist.
+	sqlDB := stdlib.OpenDBFromPool(sharedPool)
+	defer sqlDB.Close() //nolint:errcheck
+
+	if err := goose.SetDialect("postgres"); err != nil {
+		fmt.Fprintf(os.Stderr, "goose dialect: %v\n", err)
+		return 1
+	}
+	wd, _ := os.Getwd()
+	migrationsDir := filepath.Join(wd, "../storage/postgres/migrations")
+	if err := goose.Up(sqlDB, migrationsDir); err != nil {
+		fmt.Fprintf(os.Stderr, "goose up: %v\n", err)
+		return 1
+	}
+
+	return m.Run()
+}
+
+func TestChunkService(t *testing.T) {
+	pool := sharedPool
+	ctx := context.Background()
 
 	workspaceID := uuid.New()
 	sourceID := uuid.New()
@@ -254,6 +256,40 @@ func TestChunkService(t *testing.T) {
 		}
 		if len(remaining) != 0 {
 			t.Errorf("expected 0 chunks after delete, got %d", len(remaining))
+		}
+	})
+
+	// Regression: a source composed of multiple files must not collide on the
+	// (source_id, chunk_index) unique constraint. The pipeline offsets each
+	// file's indexes via BaseIndex so they stay unique across the whole source.
+	t.Run("ChunkSource_multi_file_base_index", func(t *testing.T) {
+		file1 := req // 2 chunks -> indexes 0,1
+		file1.BaseIndex = 0
+		first, err := svc.ChunkSource(ctx, file1)
+		if err != nil {
+			t.Fatalf("ChunkSource file1: %v", err)
+		}
+
+		file2 := req // would restart at index 0 without the offset
+		file2.FilePath = "docs/setup.md"
+		file2.BaseIndex = len(first)
+		second, err := svc.ChunkSource(ctx, file2)
+		if err != nil {
+			t.Fatalf("ChunkSource file2 (index offset should avoid collision): %v", err)
+		}
+
+		got, err := svc.ListChunks(ctx, sourceID)
+		if err != nil {
+			t.Fatalf("ListChunks: %v", err)
+		}
+		want := len(first) + len(second)
+		if len(got) != want {
+			t.Fatalf("got %d chunks across two files, want %d", len(got), want)
+		}
+		for i, ch := range got {
+			if ch.ChunkIndex != i {
+				t.Errorf("chunk[%d].ChunkIndex = %d, want %d (indexes must be contiguous and unique)", i, ch.ChunkIndex, i)
+			}
 		}
 	})
 }
