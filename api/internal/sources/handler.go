@@ -17,15 +17,17 @@ import (
 
 // Handler holds HTTP handler methods for the sources domain.
 type Handler struct {
-	service Service
-	bus     *ProgressBus
-	members workspaces.Service
+	service        Service
+	bus            *ProgressBus
+	members        workspaces.Service
+	maxUploadBytes int64
 }
 
 // NewHandler returns a Handler backed by service and bus. members enforces
 // that the caller belongs to the workspace named in each request.
-func NewHandler(service Service, bus *ProgressBus, members workspaces.Service) *Handler {
-	return &Handler{service: service, bus: bus, members: members}
+// maxUploadBytes caps the size of an upload request body.
+func NewHandler(service Service, bus *ProgressBus, members workspaces.Service, maxUploadBytes int64) *Handler {
+	return &Handler{service: service, bus: bus, members: members, maxUploadBytes: maxUploadBytes}
 }
 
 // CreateSource godoc
@@ -48,6 +50,10 @@ func NewHandler(service Service, bus *ProgressBus, members workspaces.Service) *
 // @Failure 500
 // @Router /sources [post]
 func (h *Handler) CreateSource(w http.ResponseWriter, r *http.Request) {
+	// Cap the request body so a client can't stream an unbounded upload to disk.
+	// Exceeding the limit surfaces as an error from ParseMultipartForm below.
+	r.Body = http.MaxBytesReader(w, r.Body, h.maxUploadBytes)
+
 	if err := r.ParseMultipartForm(32 << 20); err != nil {
 		slog.WarnContext(r.Context(), "invalid create source request", "err", err, "request_id", logger.RequestID(r.Context()))
 		http.Error(w, "invalid multipart form: "+err.Error(), http.StatusBadRequest)
@@ -248,6 +254,10 @@ func (h *Handler) StreamStatus(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "streaming not supported by this server", http.StatusInternalServerError)
 		return
 	}
+
+	// Clear the write deadline so the server's WriteTimeout doesn't cut off this
+	// long-lived stream (indexing can run for minutes). Ignore ErrNotSupported.
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
 
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")

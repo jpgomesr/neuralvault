@@ -2,10 +2,13 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/jpgomesr/NeuralVault/internal/auth"
 	"github.com/jpgomesr/NeuralVault/internal/config"
@@ -77,16 +80,61 @@ func main() {
 
 	r := router.NewRouter(cfg, pgPool, minioClient, embedder, qdrantClient, llmProvider, authService)
 
-	if err := startHTTPServer(cfg, r, http.ListenAndServe); err != nil {
+	// ctx is cancelled on SIGINT/SIGTERM to trigger graceful shutdown.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	serve := func(s *http.Server) error { return s.ListenAndServe() }
+	shutdown := func(s *http.Server, c context.Context) error { return s.Shutdown(c) }
+
+	if err := startHTTPServer(ctx, cfg, r, serve, shutdown); err != nil {
 		slog.Error("server stopped", "error", err)
 		os.Exit(1)
 	}
 }
 
-func startHTTPServer(cfg *config.Config, handler http.Handler, listenAndServe func(string, http.Handler) error) error {
-	addr := fmt.Sprintf(":%d", cfg.Server.Port)
+// startHTTPServer builds an http.Server with the configured timeouts and runs it
+// until ctx is cancelled (SIGINT/SIGTERM), then drains in-flight connections via
+// shutdown, bounded by cfg.Server.ShutdownTimeout. serve and shutdown are injected
+// so the lifecycle can be unit-tested without binding a real socket.
+func startHTTPServer(
+	ctx context.Context,
+	cfg *config.Config,
+	handler http.Handler,
+	serve func(*http.Server) error,
+	shutdown func(*http.Server, context.Context) error,
+) error {
+	srv := &http.Server{
+		Addr:              fmt.Sprintf(":%d", cfg.Server.Port),
+		Handler:           handler,
+		ReadHeaderTimeout: cfg.Server.ReadHeaderTimeout,
+		ReadTimeout:       cfg.Server.ReadTimeout,
+		WriteTimeout:      cfg.Server.WriteTimeout,
+		IdleTimeout:       cfg.Server.IdleTimeout,
+	}
 
-	slog.Info("server started", "addr", addr)
+	serveErr := make(chan error, 1)
+	go func() {
+		slog.Info("server started", "addr", srv.Addr)
+		serveErr <- serve(srv)
+	}()
 
-	return listenAndServe(addr, handler)
+	select {
+	case err := <-serveErr:
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			return err
+		}
+		return nil
+	case <-ctx.Done():
+		slog.Info("shutdown signal received, draining connections", "timeout", cfg.Server.ShutdownTimeout)
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.Server.ShutdownTimeout)
+		defer cancel()
+
+		if err := shutdown(srv, shutdownCtx); err != nil {
+			return fmt.Errorf("graceful shutdown failed: %w", err)
+		}
+
+		slog.Info("server shut down gracefully")
+		return nil
+	}
 }

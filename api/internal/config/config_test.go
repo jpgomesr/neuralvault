@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // resetGlobals resets package-level state between tests.
@@ -376,6 +377,62 @@ func TestLoadConfig_SuccessfulLoad(t *testing.T) {
 	dsn := cfg.Postgres.DSN()
 	if !strings.Contains(dsn, "host=localhost") || !strings.Contains(dsn, "dbname=db") {
 		t.Fatalf("expected DSN to include host and dbname, got: %s", dsn)
+	}
+}
+
+// Ensures the HTTP-hardening server settings apply their defaults and can be
+// overridden via environment variables.
+func TestLoadConfig_ServerHardeningDefaultsAndOverrides(t *testing.T) {
+	resetGlobals()
+
+	configDir := t.TempDir()
+	t.Setenv("CONFIG_DIR", configDir)
+	setValidEnv(t)
+
+	// Defaults: none of the SERVER_*_TIMEOUT / SERVER_MAX_UPLOAD_BYTES are set.
+	cfg, err := loadConfig()
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+
+	defaults := []struct {
+		name string
+		got  time.Duration
+		want time.Duration
+	}{
+		{"ReadHeaderTimeout", cfg.Server.ReadHeaderTimeout, 10 * time.Second},
+		{"ReadTimeout", cfg.Server.ReadTimeout, 60 * time.Second},
+		{"WriteTimeout", cfg.Server.WriteTimeout, 120 * time.Second},
+		{"IdleTimeout", cfg.Server.IdleTimeout, 120 * time.Second},
+		{"ShutdownTimeout", cfg.Server.ShutdownTimeout, 20 * time.Second},
+	}
+	for _, d := range defaults {
+		if d.got != d.want {
+			t.Errorf("expected %s default %v, got %v", d.name, d.want, d.got)
+		}
+	}
+	if cfg.Server.MaxUploadBytes != 104857600 {
+		t.Errorf("expected MaxUploadBytes default 104857600, got %d", cfg.Server.MaxUploadBytes)
+	}
+
+	// Overrides via environment.
+	resetGlobals()
+	t.Setenv("SERVER_READ_HEADER_TIMEOUT", "5s")
+	t.Setenv("SERVER_WRITE_TIMEOUT", "1m")
+	t.Setenv("SERVER_MAX_UPLOAD_BYTES", "1024")
+
+	cfg, err = loadConfig()
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+	if cfg.Server.ReadHeaderTimeout != 5*time.Second {
+		t.Errorf("expected ReadHeaderTimeout 5s, got %v", cfg.Server.ReadHeaderTimeout)
+	}
+	if cfg.Server.WriteTimeout != time.Minute {
+		t.Errorf("expected WriteTimeout 1m, got %v", cfg.Server.WriteTimeout)
+	}
+	if cfg.Server.MaxUploadBytes != 1024 {
+		t.Errorf("expected MaxUploadBytes 1024, got %d", cfg.Server.MaxUploadBytes)
 	}
 }
 
