@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -95,6 +96,36 @@ type errorVectorStore struct{ stubVectorStore }
 
 func (errorVectorStore) Upsert(_ context.Context, _ *qdrantpb.UpsertPoints) (*qdrantpb.UpdateResult, error) {
 	return nil, errors.New("qdrant upsert failed")
+}
+
+// deleteErrorVectorStore overrides Delete to return an error; all other methods
+// are inherited from stubVectorStore.
+type deleteErrorVectorStore struct{ stubVectorStore }
+
+func (deleteErrorVectorStore) Delete(_ context.Context, _ *qdrantpb.DeletePoints) (*qdrantpb.UpdateResult, error) {
+	return nil, errors.New("qdrant delete failed")
+}
+
+// spyVectorStore records every DeletePoints request it receives so tests can
+// assert that re-ingestion drops the previous generation of vectors. All other
+// methods are inherited from stubVectorStore. Use as a pointer.
+type spyVectorStore struct {
+	stubVectorStore
+	mu         sync.Mutex
+	deleteReqs []*qdrantpb.DeletePoints
+}
+
+func (s *spyVectorStore) Delete(_ context.Context, req *qdrantpb.DeletePoints) (*qdrantpb.UpdateResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.deleteReqs = append(s.deleteReqs, req)
+	return &qdrantpb.UpdateResult{}, nil
+}
+
+func (s *spyVectorStore) deletes() []*qdrantpb.DeletePoints {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]*qdrantpb.DeletePoints(nil), s.deleteReqs...)
 }
 
 // selectiveFailingPool wraps a real storage.Pool and intercepts Exec calls
@@ -229,8 +260,16 @@ func runAllTests(m *testing.M) int {
 	return m.Run()
 }
 
-// newSvc builds a SourceService wired to the shared containers.
+// newSvc builds a SourceService wired to the shared containers with a no-op
+// vector store.
 func newSvc(ctx context.Context, t *testing.T) *SourceService {
+	t.Helper()
+	return newSvcVS(ctx, t, stubVectorStore{})
+}
+
+// newSvcVS is newSvc with an injectable vector store, so tests can observe
+// Qdrant writes (e.g. spyVectorStore).
+func newSvcVS(ctx context.Context, t *testing.T, vs vectorstorage.Client) *SourceService {
 	t.Helper()
 	store, err := minioclient.New(ctx, sharedMinioCfg)
 	if err != nil {
@@ -247,7 +286,7 @@ func newSvc(ctx context.Context, t *testing.T) *SourceService {
 		chunking.NewChunkService(sharedPool, splitters),
 		NewProgressBus(),
 		&stubEmbedder{dim: 768},
-		stubVectorStore{},
+		vs,
 		"test",
 		"nomic-embed-text",
 	)
@@ -284,6 +323,23 @@ func awaitIndexed(ctx context.Context, t *testing.T, svc *SourceService, id uuid
 		time.Sleep(100 * time.Millisecond)
 	}
 	t.Fatalf("timed out waiting for source %s to be indexed", id)
+}
+
+// awaitError polls GetByID until the source reaches error status (30s timeout).
+func awaitError(ctx context.Context, t *testing.T, svc *SourceService, id uuid.UUID) {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		src, err := svc.GetByID(ctx, id)
+		if err != nil {
+			t.Fatalf("GetByID while polling: %v", err)
+		}
+		if src.Status == model.SourceStatusError {
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for source %s to reach error status", id)
 }
 
 // ── Service tests ─────────────────────────────────────────────────────────────
@@ -423,7 +479,8 @@ func TestServiceListChunks(t *testing.T) {
 
 func TestServiceIngest(t *testing.T) {
 	ctx := context.Background()
-	svc := newSvc(ctx, t)
+	spy := &spyVectorStore{}
+	svc := newSvcVS(ctx, t, spy)
 	wid := insertWS(ctx, t)
 
 	const content = "# Hello\nOriginal content."
@@ -447,6 +504,32 @@ func TestServiceIngest(t *testing.T) {
 	if len(chunks) == 0 {
 		t.Error("expected chunks after re-ingest")
 	}
+
+	// Regression guard for #61: re-ingestion must delete the previous generation
+	// of vectors from Qdrant (initial ingest does not delete). Exactly one Delete
+	// should have been issued, scoped to this source's source_id.
+	deletes := spy.deletes()
+	if len(deletes) != 1 {
+		t.Fatalf("expected exactly one Qdrant delete during re-ingest, got %d", len(deletes))
+	}
+	if got := deleteFilterSourceID(t, deletes[0]); got != src.ID.String() {
+		t.Errorf("delete filter source_id = %q, want %q", got, src.ID.String())
+	}
+}
+
+// deleteFilterSourceID extracts the source_id keyword from a DeletePoints request
+// built by deleteSourceVectors, failing the test if the shape is unexpected.
+func deleteFilterSourceID(t *testing.T, req *qdrantpb.DeletePoints) string {
+	t.Helper()
+	must := req.GetPoints().GetFilter().GetMust()
+	if len(must) != 1 {
+		t.Fatalf("expected exactly one filter condition, got %d", len(must))
+	}
+	field := must[0].GetField()
+	if field.GetKey() != "source_id" {
+		t.Fatalf("delete filter key = %q, want source_id", field.GetKey())
+	}
+	return field.GetMatch().GetKeyword()
 }
 
 func TestServiceIngest_NotFound(t *testing.T) {
@@ -457,6 +540,30 @@ func TestServiceIngest_NotFound(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for non-existent source, got nil")
 	}
+}
+
+// TestServiceIngest_DeleteVectorsError verifies that a failure deleting the old
+// Qdrant vectors during re-ingestion aborts the pipeline and marks the source
+// errored. Initial indexing still succeeds because deleteErrorVectorStore only
+// fails Delete, not Upsert.
+func TestServiceIngest_DeleteVectorsError(t *testing.T) {
+	ctx := context.Background()
+	svc := newSvcVS(ctx, t, deleteErrorVectorStore{})
+	wid := insertWS(ctx, t)
+
+	const content = "# Hello\nOriginal content."
+	src, err := svc.Create(ctx, CreateRequest{WorkspaceID: wid, Name: "re-ingest-delete-fail"}, []FileUpload{
+		{Name: "file.md", Content: bytes.NewBufferString(content), Size: int64(len(content))},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	awaitIndexed(ctx, t, svc, src.ID)
+
+	if err := svc.Ingest(ctx, src.ID); err != nil {
+		t.Fatalf("Ingest: %v", err)
+	}
+	awaitError(ctx, t, svc, src.ID)
 }
 
 // ── Helpers for pipeline-level tests ─────────────────────────────────────────
@@ -603,6 +710,40 @@ func TestUpsertChunkVectors_UpsertError(t *testing.T) {
 	err := svc.upsertChunkVectors(ctx, chunks, embeddings)
 	if err == nil || !strings.Contains(err.Error(), "qdrant upsert") {
 		t.Fatalf("expected qdrant upsert error, got: %v", err)
+	}
+}
+
+// ── deleteSourceVectors direct tests ─────────────────────────────────────────
+
+func TestDeleteSourceVectors(t *testing.T) {
+	ctx := context.Background()
+	spy := &spyVectorStore{}
+	svc := &SourceService{vectorStore: spy, collectionName: "test"}
+
+	sourceID := uuid.New()
+	if err := svc.deleteSourceVectors(ctx, sourceID); err != nil {
+		t.Fatalf("deleteSourceVectors: %v", err)
+	}
+
+	deletes := spy.deletes()
+	if len(deletes) != 1 {
+		t.Fatalf("expected one delete request, got %d", len(deletes))
+	}
+	if got := deletes[0].GetCollectionName(); got != "test" {
+		t.Errorf("collection name = %q, want test", got)
+	}
+	if got := deleteFilterSourceID(t, deletes[0]); got != sourceID.String() {
+		t.Errorf("delete filter source_id = %q, want %q", got, sourceID.String())
+	}
+}
+
+func TestDeleteSourceVectors_DeleteError(t *testing.T) {
+	ctx := context.Background()
+	svc := &SourceService{vectorStore: deleteErrorVectorStore{}, collectionName: "test"}
+
+	err := svc.deleteSourceVectors(ctx, uuid.New())
+	if err == nil || !strings.Contains(err.Error(), "qdrant delete") {
+		t.Fatalf("expected qdrant delete error, got: %v", err)
 	}
 }
 
