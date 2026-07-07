@@ -28,6 +28,7 @@ type ChunkRequest struct {
 	ContentType ContentType
 	FilePath    string // used to populate FileChunkMetadata
 	PageNumber  int    // used to populate FileChunkMetadata (PDF pages)
+	BaseIndex   int    // offset added to per-request chunk indexes so chunk_index stays unique across a multi-file source
 }
 
 // ChunkService is the concrete implementation of Service.
@@ -65,7 +66,7 @@ func (s *ChunkService) ChunkSource(ctx context.Context, req ChunkRequest) ([]mod
 			SourceID:       req.SourceID,
 			WorkspaceID:    req.WorkspaceID,
 			Content:        span.Content,
-			ChunkIndex:     i,
+			ChunkIndex:     req.BaseIndex + i,
 			Metadata:       meta,
 			EmbeddingModel: "",
 		})

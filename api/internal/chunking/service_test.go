@@ -256,6 +256,40 @@ func TestChunkService(t *testing.T) {
 			t.Errorf("expected 0 chunks after delete, got %d", len(remaining))
 		}
 	})
+
+	// Regression: a source composed of multiple files must not collide on the
+	// (source_id, chunk_index) unique constraint. The pipeline offsets each
+	// file's indexes via BaseIndex so they stay unique across the whole source.
+	t.Run("ChunkSource_multi_file_base_index", func(t *testing.T) {
+		file1 := req // 2 chunks -> indexes 0,1
+		file1.BaseIndex = 0
+		first, err := svc.ChunkSource(ctx, file1)
+		if err != nil {
+			t.Fatalf("ChunkSource file1: %v", err)
+		}
+
+		file2 := req // would restart at index 0 without the offset
+		file2.FilePath = "docs/setup.md"
+		file2.BaseIndex = len(first)
+		second, err := svc.ChunkSource(ctx, file2)
+		if err != nil {
+			t.Fatalf("ChunkSource file2 (index offset should avoid collision): %v", err)
+		}
+
+		got, err := svc.ListChunks(ctx, sourceID)
+		if err != nil {
+			t.Fatalf("ListChunks: %v", err)
+		}
+		want := len(first) + len(second)
+		if len(got) != want {
+			t.Fatalf("got %d chunks across two files, want %d", len(got), want)
+		}
+		for i, ch := range got {
+			if ch.ChunkIndex != i {
+				t.Errorf("chunk[%d].ChunkIndex = %d, want %d (indexes must be contiguous and unique)", i, ch.ChunkIndex, i)
+			}
+		}
+	})
 }
 
 // TestChunkSource_Errors exercises ChunkSource's transaction-failure branches

@@ -307,6 +307,9 @@ func (s *SourceService) runPipeline(ctx context.Context, source model.Source) (i
 
 	total := 0
 	for _, req := range requests {
+		// Offset each file's chunk indexes by the running total so chunk_index
+		// stays unique within the source (constraint chunks_source_id_chunk_index_key).
+		req.BaseIndex = total
 		chunks, err := s.chunker.ChunkSource(ctx, req)
 		if err != nil {
 			return 0, fmt.Errorf("chunking %q: %w", req.FilePath, err)
