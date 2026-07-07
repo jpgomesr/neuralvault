@@ -28,7 +28,10 @@ import (
 func NewRouter(cfg *config.Config, pool storage.Pool, store objectstorage.Client, embedder embedding.Embedder, vectorStore vectorstorage.Client, llmProvider llm.Provider, authService auth.Service) *chi.Mux {
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
+	// requestLogging wraps Recoverer so the "request completed" line still records
+	// the 500 that Recoverer writes when a downstream handler panics.
 	r.Use(requestLogging)
+	r.Use(middleware.Recoverer)
 
 	healthService := health.NewHealthService(3*time.Second,
 		health.Check{Name: "postgres", Fn: pool.Ping},
@@ -52,7 +55,7 @@ func NewRouter(cfg *config.Config, pool storage.Pool, store objectstorage.Client
 	workspaceHandler := workspaces.NewHandler(workspaceService)
 
 	sourceService := sources.NewSourceService(pool, store, sourcereader.NewFileReader(), chunkService, bus, embedder, vectorStore, cfg.Qdrant.CollectionName, cfg.Ollama.EmbeddingModel)
-	sourceHandler := sources.NewHandler(sourceService, bus, workspaceService)
+	sourceHandler := sources.NewHandler(sourceService, bus, workspaceService, cfg.Server.MaxUploadBytes)
 
 	retrievalService := retrieval.NewRetrievalService(pool, embedder, vectorStore, llmProvider, cfg.Qdrant.CollectionName, cfg.Ollama.CompletionModel)
 	retrievalHandler := retrieval.NewHandler(retrievalService, workspaceService)

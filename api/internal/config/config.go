@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/go-playground/validator"
 	"github.com/joho/godotenv"
@@ -28,6 +29,21 @@ type Config struct {
 type Server struct {
 	Port int    `envconfig:"PORT" default:"8180" validate:"gte=1,lte=65535"`
 	Env  string `envconfig:"ENV" validate:"required"`
+	// ReadHeaderTimeout bounds how long the server waits for request headers,
+	// the primary guard against slowloris-style slow-client attacks.
+	ReadHeaderTimeout time.Duration `envconfig:"READ_HEADER_TIMEOUT" default:"10s"`
+	// ReadTimeout bounds the time to read the entire request, including the body.
+	ReadTimeout time.Duration `envconfig:"READ_TIMEOUT" default:"60s"`
+	// WriteTimeout bounds the time to write the response. The SSE status stream
+	// opts out of this via http.ResponseController so long-lived streams survive.
+	WriteTimeout time.Duration `envconfig:"WRITE_TIMEOUT" default:"120s"`
+	// IdleTimeout bounds how long an idle keep-alive connection is kept open.
+	IdleTimeout time.Duration `envconfig:"IDLE_TIMEOUT" default:"120s"`
+	// ShutdownTimeout bounds graceful shutdown before in-flight connections are
+	// forcibly closed on SIGINT/SIGTERM.
+	ShutdownTimeout time.Duration `envconfig:"SHUTDOWN_TIMEOUT" default:"20s"`
+	// MaxUploadBytes caps the size of an upload request body (default 100 MiB).
+	MaxUploadBytes int64 `envconfig:"MAX_UPLOAD_BYTES" default:"104857600"`
 }
 
 // Postgres contains database connection settings.
