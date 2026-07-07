@@ -322,6 +322,23 @@ func awaitIndexed(ctx context.Context, t *testing.T, svc *SourceService, id uuid
 	t.Fatalf("timed out waiting for source %s to be indexed", id)
 }
 
+// awaitError polls GetByID until the source reaches error status (30s timeout).
+func awaitError(ctx context.Context, t *testing.T, svc *SourceService, id uuid.UUID) {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		src, err := svc.GetByID(ctx, id)
+		if err != nil {
+			t.Fatalf("GetByID while polling: %v", err)
+		}
+		if src.Status == model.SourceStatusError {
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for source %s to reach error status", id)
+}
+
 // ── Service tests ─────────────────────────────────────────────────────────────
 
 func TestServiceCreate(t *testing.T) {
@@ -520,6 +537,30 @@ func TestServiceIngest_NotFound(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for non-existent source, got nil")
 	}
+}
+
+// TestServiceIngest_DeleteVectorsError verifies that a failure deleting the old
+// Qdrant vectors during re-ingestion aborts the pipeline and marks the source
+// errored. Initial indexing still succeeds because deleteErrorVectorStore only
+// fails Delete, not Upsert.
+func TestServiceIngest_DeleteVectorsError(t *testing.T) {
+	ctx := context.Background()
+	svc := newSvcVS(ctx, t, deleteErrorVectorStore{})
+	wid := insertWS(ctx, t)
+
+	const content = "# Hello\nOriginal content."
+	src, err := svc.Create(ctx, CreateRequest{WorkspaceID: wid, Name: "re-ingest-delete-fail"}, []FileUpload{
+		{Name: "file.md", Content: bytes.NewBufferString(content), Size: int64(len(content))},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	awaitIndexed(ctx, t, svc, src.ID)
+
+	if err := svc.Ingest(ctx, src.ID); err != nil {
+		t.Fatalf("Ingest: %v", err)
+	}
+	awaitError(ctx, t, svc, src.ID)
 }
 
 // ── Helpers for pipeline-level tests ─────────────────────────────────────────
