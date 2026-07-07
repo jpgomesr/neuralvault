@@ -137,7 +137,7 @@ export async function streamQuery(
   }
 }
 
-function dispatchSSE(block: string, handlers: QueryHandlers): void {
+export function dispatchSSE(block: string, handlers: QueryHandlers): void {
   let event = "";
   const dataLines: string[] = [];
   for (const line of block.split("\n")) {

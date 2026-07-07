@@ -1,4 +1,4 @@
-name: Coverage
+name: Coverage — API
 
 on:
   pull_request:
@@ -52,4 +52,5 @@ jobs:
         uses: codecov/codecov-action@v7
         with:
           files: api/coverage.out
+          flags: api
           token: ${{ secrets.CODECOV_TOKEN }}
