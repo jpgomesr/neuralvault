@@ -8,3 +8,13 @@ ignore:
   - "api/internal/sources/routes.go"
   - "api/internal/retrieval/routes.go"
   - "api/internal/embedding/embedding.go"
+
+flags:
+  api:
+    paths:
+      - api/**
+    carryforward: true
+  web:
+    paths:
+      - web/**
+    carryforward: true
