@@ -240,6 +240,11 @@ func (s *SourceService) reingestInBackground(source model.Source) {
 		return
 	}
 
+	if err := s.deleteSourceVectors(ctx, source.ID); err != nil {
+		s.failReingest(ctx, source, err)
+		return
+	}
+
 	tempDir, err := os.MkdirTemp("", "neuralvault-*")
 	if err != nil {
 		s.failReingest(ctx, source, err)
@@ -376,6 +381,24 @@ func (s *SourceService) upsertChunkVectors(ctx context.Context, chunks []model.C
 		Points:         points,
 	}); err != nil {
 		return fmt.Errorf("qdrant upsert: %w", err)
+	}
+	return nil
+}
+
+// deleteSourceVectors removes every Qdrant point belonging to a source, matched
+// by the source_id payload written in upsertChunkVectors. Used during re-ingestion
+// to drop the previous generation of vectors before new chunks are upserted;
+// without it, re-ingested chunks get fresh UUIDs, never collide with the old point
+// IDs, and the previous generation leaks in Qdrant forever.
+func (s *SourceService) deleteSourceVectors(ctx context.Context, sourceID uuid.UUID) error {
+	_, err := s.vectorStore.Delete(ctx, &qdrantpb.DeletePoints{
+		CollectionName: s.collectionName,
+		Points: qdrantpb.NewPointsSelectorFilter(&qdrantpb.Filter{
+			Must: []*qdrantpb.Condition{qdrantpb.NewMatch("source_id", sourceID.String())},
+		}),
+	})
+	if err != nil {
+		return fmt.Errorf("qdrant delete for source %s: %w", sourceID, err)
 	}
 	return nil
 }
