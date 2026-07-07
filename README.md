@@ -1,7 +1,7 @@
 # NeuralVault
 
-[![codecov (api)](https://codecov.io/gh/jpgomesr/neuralvault/branch/main/graph/badge.svg?flag=api)](https://codecov.io/gh/jpgomesr/neuralvault)
-[![codecov (web)](https://codecov.io/gh/jpgomesr/neuralvault/branch/main/graph/badge.svg?flag=web)](https://codecov.io/gh/jpgomesr/neuralvault)
+[![api coverage](https://img.shields.io/codecov/c/github/jpgomesr/neuralvault/main?flag=api&label=api%20coverage&logo=codecov)](https://codecov.io/gh/jpgomesr/neuralvault?flags[]=api)
+[![web coverage](https://img.shields.io/codecov/c/github/jpgomesr/neuralvault/main?flag=web&label=web%20coverage&logo=codecov)](https://codecov.io/gh/jpgomesr/neuralvault?flags[]=web)
 
 > Give AI long-term memory using your notes, repositories, and documentation.
 
