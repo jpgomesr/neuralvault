@@ -105,6 +105,43 @@ const docTemplate = `{
                 }
             }
         },
+        "/auth/token": {
+            "post": {
+                "description": "Authenticates against the OIDC provider's token endpoint via the password grant and issues the nv_session cookie.",
+                "consumes": [
+                    "application/json"
+                ],
+                "tags": [
+                    "auth"
+                ],
+                "summary": "Native email/password login",
+                "parameters": [
+                    {
+                        "description": "Credentials",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/auth.tokenRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "Bad Request"
+                    },
+                    "401": {
+                        "description": "Unauthorized"
+                    },
+                    "500": {
+                        "description": "Internal Server Error"
+                    }
+                }
+            }
+        },
         "/health": {
             "get": {
                 "description": "Probes every infrastructure dependency (Postgres, Qdrant, MinIO, Keycloak, Ollama) and reports each one. Returns 200 when all are healthy and 503 when any is down.",
@@ -437,6 +474,17 @@ const docTemplate = `{
         }
     },
     "definitions": {
+        "auth.tokenRequest": {
+            "type": "object",
+            "properties": {
+                "email": {
+                    "type": "string"
+                },
+                "password": {
+                    "type": "string"
+                }
+            }
+        },
         "health.Report": {
             "type": "object",
             "properties": {
