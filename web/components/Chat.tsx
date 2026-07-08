@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { streamQuery } from "@/lib/api";
 import type { SourceChunk } from "@/lib/types";
 
@@ -100,16 +102,16 @@ export default function Chat({ workspaceId }: { workspaceId: string }) {
       </div>
 
       <form className="composer" onSubmit={onSubmit}>
-        <input
+        <Input
           type="text"
           placeholder="Ask a question…"
           value={input}
           onChange={(e) => setInput(e.target.value)}
           disabled={busy}
         />
-        <button className="btn" type="submit" disabled={busy || !input.trim()}>
+        <Button type="submit" disabled={busy || !input.trim()}>
           {busy ? "…" : "Send"}
-        </button>
+        </Button>
       </form>
     </section>
   );

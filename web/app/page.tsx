@@ -4,6 +4,15 @@ import { useCallback, useEffect, useState } from "react";
 import Chat from "@/components/Chat";
 import Sidebar from "@/components/Sidebar";
 import SignIn from "@/components/SignIn";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { createWorkspace, getMe, listWorkspaces, logout } from "@/lib/api";
 import type { Me, Workspace } from "@/lib/types";
 
@@ -52,22 +61,30 @@ export default function Home() {
     <div className="app">
       <div className="topbar">
         <span className="brand">NeuralVault</span>
-        <select value={activeId} onChange={(e) => setActiveId(e.target.value)}>
-          {workspaces.length === 0 && <option value="">No workspaces</option>}
-          {workspaces.map((w) => (
-            <option key={w.ID} value={w.ID}>
-              {w.Name}
-            </option>
-          ))}
-        </select>
-        <button className="btn secondary" onClick={onCreateWorkspace}>
+        <Select
+          value={activeId}
+          onValueChange={setActiveId}
+          disabled={workspaces.length === 0}
+        >
+          <SelectTrigger>
+            <SelectValue placeholder="No workspaces" />
+          </SelectTrigger>
+          <SelectContent>
+            {workspaces.map((w) => (
+              <SelectItem key={w.ID} value={w.ID}>
+                {w.Name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        <Button variant="secondary" onClick={onCreateWorkspace}>
           + New
-        </button>
+        </Button>
         <div className="spacer" />
         <span className="email">{me.email}</span>
-        <button className="btn secondary" onClick={onLogout}>
+        <Button variant="secondary" onClick={onLogout}>
           Sign out
-        </button>
+        </Button>
       </div>
 
       {activeId ? (
@@ -77,12 +94,10 @@ export default function Home() {
         </div>
       ) : (
         <div className="center">
-          <div className="card">
+          <Card className="items-center p-6 text-center">
             <p className="hint">Create a workspace to get started.</p>
-            <button className="btn" onClick={onCreateWorkspace}>
-              Create workspace
-            </button>
-          </div>
+            <Button onClick={onCreateWorkspace}>Create workspace</Button>
+          </Card>
         </div>
       )}
     </div>
