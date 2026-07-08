@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { streamQuery } from "@/lib/api/query";
 import type { SourceChunk } from "@/lib/types";
+import Markdown from "@/components/Markdown";
 
 interface Message {
   role: "user" | "assistant";
@@ -85,7 +86,11 @@ export default function Chat({ workspaceId }: { workspaceId: string }) {
           <div className={`msg ${m.role}`} key={i}>
             <div className="role">{m.role}</div>
             <div className="bubble">
-              {m.content || (m.streaming ? "…" : "")}
+              {m.role === "assistant" && m.content ? (
+                <Markdown>{m.content}</Markdown>
+              ) : (
+                m.content || (m.streaming ? "…" : "")
+              )}
             </div>
             {m.sources && m.sources.length > 0 && (
               <div className="sources">

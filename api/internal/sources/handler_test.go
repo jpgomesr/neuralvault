@@ -23,9 +23,14 @@ const testMaxUpload int64 = 32 << 20
 
 // fakeService is a minimal test double for Service.
 type fakeService struct {
-	source *model.Source
-	chunks []model.Chunk
-	err    error
+	source      *model.Source
+	chunks      []model.Chunk
+	files       []model.SourceFile
+	fileContent string
+	fileType    string
+	err         error
+	filesErr    error
+	openErr     error
 }
 
 func (f *fakeService) Create(_ context.Context, _ CreateRequest, _ []FileUpload) (*model.Source, error) {
@@ -52,6 +57,17 @@ func (f *fakeService) ListChunks(_ context.Context, _ uuid.UUID) ([]model.Chunk,
 
 func (f *fakeService) GetByID(_ context.Context, _ uuid.UUID) (*model.Source, error) {
 	return f.source, f.err
+}
+
+func (f *fakeService) ListFiles(_ context.Context, _ uuid.UUID) ([]model.SourceFile, error) {
+	return f.files, f.filesErr
+}
+
+func (f *fakeService) OpenFile(_ context.Context, _ uuid.UUID, _ string) (io.ReadCloser, string, error) {
+	if f.openErr != nil {
+		return nil, "", f.openErr
+	}
+	return io.NopCloser(strings.NewReader(f.fileContent)), f.fileType, nil
 }
 
 // fakeMembers is a test double for workspaces.Service controlling whether the
@@ -381,6 +397,210 @@ func TestListChunks_ServiceError(t *testing.T) {
 
 	if w.Code != http.StatusInternalServerError {
 		t.Fatalf("expected 500, got %d", w.Code)
+	}
+}
+
+// ── ListFiles ─────────────────────────────────────────────────────────────────
+
+func TestListFiles_Success(t *testing.T) {
+	src := sourceWithStatus(model.SourceStatusIndexed)
+	files := []model.SourceFile{{ID: uuid.New(), SourceID: src.ID, Name: "docs/intro.md", Size: 42, ContentType: "text/markdown"}}
+	h := NewHandler(&fakeService{source: src, files: files}, NewProgressBus(), allowMembers(), testMaxUpload)
+
+	r := routedRequest(http.MethodGet, "/sources/"+src.ID.String()+"/files",
+		map[string]string{"id": src.ID.String()}, nil)
+	w := httptest.NewRecorder()
+	h.ListFiles(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var got []model.SourceFile
+	if err := json.NewDecoder(w.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(got) != 1 || got[0].Name != "docs/intro.md" {
+		t.Fatalf("unexpected files: %+v", got)
+	}
+}
+
+func TestListFiles_ForbiddenWhenNotMember(t *testing.T) {
+	src := sourceWithStatus(model.SourceStatusIndexed)
+	h := NewHandler(&fakeService{source: src}, NewProgressBus(), fakeMembers{member: false}, testMaxUpload)
+
+	r := routedRequest(http.MethodGet, "/sources/"+src.ID.String()+"/files",
+		map[string]string{"id": src.ID.String()}, nil)
+	w := httptest.NewRecorder()
+	h.ListFiles(w, r)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", w.Code)
+	}
+}
+
+func TestListFiles_InvalidID(t *testing.T) {
+	h := NewHandler(&fakeService{}, NewProgressBus(), allowMembers(), testMaxUpload)
+
+	r := routedRequest(http.MethodGet, "/sources/bad/files", map[string]string{"id": "bad"}, nil)
+	w := httptest.NewRecorder()
+	h.ListFiles(w, r)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestListFiles_SourceNotFound(t *testing.T) {
+	h := NewHandler(&fakeService{err: errTest("not found")}, NewProgressBus(), allowMembers(), testMaxUpload)
+	id := uuid.New()
+
+	r := routedRequest(http.MethodGet, "/sources/"+id.String()+"/files",
+		map[string]string{"id": id.String()}, nil)
+	w := httptest.NewRecorder()
+	h.ListFiles(w, r)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", w.Code)
+	}
+}
+
+func TestListFiles_ServiceError(t *testing.T) {
+	src := sourceWithStatus(model.SourceStatusIndexed)
+	h := NewHandler(&fakeService{source: src, filesErr: errTest("db error")}, NewProgressBus(), allowMembers(), testMaxUpload)
+
+	r := routedRequest(http.MethodGet, "/sources/"+src.ID.String()+"/files",
+		map[string]string{"id": src.ID.String()}, nil)
+	w := httptest.NewRecorder()
+	h.ListFiles(w, r)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", w.Code)
+	}
+}
+
+func TestListFiles_EmptyList(t *testing.T) {
+	src := sourceWithStatus(model.SourceStatusIndexed)
+	h := NewHandler(&fakeService{source: src}, NewProgressBus(), allowMembers(), testMaxUpload)
+
+	r := routedRequest(http.MethodGet, "/sources/"+src.ID.String()+"/files",
+		map[string]string{"id": src.ID.String()}, nil)
+	w := httptest.NewRecorder()
+	h.ListFiles(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if got := w.Body.String(); got != "[]\n" {
+		t.Errorf("expected empty JSON array, got %q", got)
+	}
+}
+
+// ── GetFileContent ────────────────────────────────────────────────────────────
+
+func TestGetFileContent_Success(t *testing.T) {
+	src := sourceWithStatus(model.SourceStatusIndexed)
+	h := NewHandler(&fakeService{source: src, fileContent: "# Hello", fileType: "text/markdown"}, NewProgressBus(), allowMembers(), testMaxUpload)
+
+	r := routedRequest(http.MethodGet, "/sources/"+src.ID.String()+"/files/content?path=docs/intro.md",
+		map[string]string{"id": src.ID.String()}, nil)
+	w := httptest.NewRecorder()
+	h.GetFileContent(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if ct := w.Header().Get("Content-Type"); ct != "text/markdown" {
+		t.Errorf("expected content-type text/markdown, got %q", ct)
+	}
+	if w.Body.String() != "# Hello" {
+		t.Errorf("unexpected body: %q", w.Body.String())
+	}
+}
+
+func TestGetFileContent_MissingPath(t *testing.T) {
+	src := sourceWithStatus(model.SourceStatusIndexed)
+	h := NewHandler(&fakeService{source: src}, NewProgressBus(), allowMembers(), testMaxUpload)
+
+	r := routedRequest(http.MethodGet, "/sources/"+src.ID.String()+"/files/content",
+		map[string]string{"id": src.ID.String()}, nil)
+	w := httptest.NewRecorder()
+	h.GetFileContent(w, r)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestGetFileContent_ForbiddenWhenNotMember(t *testing.T) {
+	src := sourceWithStatus(model.SourceStatusIndexed)
+	h := NewHandler(&fakeService{source: src}, NewProgressBus(), fakeMembers{member: false}, testMaxUpload)
+
+	r := routedRequest(http.MethodGet, "/sources/"+src.ID.String()+"/files/content?path=x.md",
+		map[string]string{"id": src.ID.String()}, nil)
+	w := httptest.NewRecorder()
+	h.GetFileContent(w, r)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", w.Code)
+	}
+}
+
+func TestGetFileContent_InvalidID(t *testing.T) {
+	h := NewHandler(&fakeService{}, NewProgressBus(), allowMembers(), testMaxUpload)
+
+	r := routedRequest(http.MethodGet, "/sources/bad/files/content?path=x.md",
+		map[string]string{"id": "bad"}, nil)
+	w := httptest.NewRecorder()
+	h.GetFileContent(w, r)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestGetFileContent_SourceNotFound(t *testing.T) {
+	h := NewHandler(&fakeService{err: errTest("not found")}, NewProgressBus(), allowMembers(), testMaxUpload)
+	id := uuid.New()
+
+	r := routedRequest(http.MethodGet, "/sources/"+id.String()+"/files/content?path=x.md",
+		map[string]string{"id": id.String()}, nil)
+	w := httptest.NewRecorder()
+	h.GetFileContent(w, r)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", w.Code)
+	}
+}
+
+func TestGetFileContent_FileNotFound(t *testing.T) {
+	src := sourceWithStatus(model.SourceStatusIndexed)
+	h := NewHandler(&fakeService{source: src, openErr: errTest("missing")}, NewProgressBus(), allowMembers(), testMaxUpload)
+
+	r := routedRequest(http.MethodGet, "/sources/"+src.ID.String()+"/files/content?path=x.md",
+		map[string]string{"id": src.ID.String()}, nil)
+	w := httptest.NewRecorder()
+	h.GetFileContent(w, r)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", w.Code)
+	}
+}
+
+func TestGetFileContent_DefaultsContentType(t *testing.T) {
+	src := sourceWithStatus(model.SourceStatusIndexed)
+	// Empty content type from the service falls back to octet-stream.
+	h := NewHandler(&fakeService{source: src, fileContent: "raw", fileType: ""}, NewProgressBus(), allowMembers(), testMaxUpload)
+
+	r := routedRequest(http.MethodGet, "/sources/"+src.ID.String()+"/files/content?path=blob.bin",
+		map[string]string{"id": src.ID.String()}, nil)
+	w := httptest.NewRecorder()
+	h.GetFileContent(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if ct := w.Header().Get("Content-Type"); ct != "application/octet-stream" {
+		t.Errorf("expected octet-stream fallback, got %q", ct)
 	}
 }
 

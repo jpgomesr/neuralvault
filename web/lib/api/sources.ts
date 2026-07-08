@@ -1,11 +1,33 @@
 // Thin client over the Go API's source endpoints.
 
-import type { Source, SourceProgress } from "../types";
+import type { Source, SourceFile, SourceProgress } from "../types";
 
 export async function listSources(workspaceId: string): Promise<Source[]> {
   const res = await fetch(`/api/sources?workspace_id=${encodeURIComponent(workspaceId)}`);
   if (!res.ok) throw new Error(`list sources failed: ${res.status}`);
   return (await res.json()) ?? [];
+}
+
+/** listSourceFiles returns the original files stored for a source. */
+export async function listSourceFiles(sourceId: string): Promise<SourceFile[]> {
+  const res = await fetch(`/api/sources/${encodeURIComponent(sourceId)}/files`);
+  if (!res.ok) throw new Error(`list source files failed: ${res.status}`);
+  return (await res.json()) ?? [];
+}
+
+/**
+ * sourceFileContentUrl builds the URL that streams a file's content. Suitable as
+ * an <img>/<iframe> src or a download link href; the API sets the content type.
+ */
+export function sourceFileContentUrl(sourceId: string, path: string): string {
+  return `/api/sources/${encodeURIComponent(sourceId)}/files/content?path=${encodeURIComponent(path)}`;
+}
+
+/** fetchSourceFileText fetches a file's content as text (for text/markdown preview). */
+export async function fetchSourceFileText(sourceId: string, path: string): Promise<string> {
+  const res = await fetch(sourceFileContentUrl(sourceId, path));
+  if (!res.ok) throw new Error(`fetch file failed: ${res.status}`);
+  return res.text();
 }
 
 export interface UploadResult {

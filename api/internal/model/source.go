@@ -51,3 +51,15 @@ type Source struct {
 	CreatedAt   time.Time        `db:"created_at"`
 	UpdatedAt   time.Time        `db:"updated_at"`
 }
+
+// SourceFile is one original file stored for a source. It preserves the file's
+// path relative to the uploaded root (e.g. "docs/intro.md") along with its size
+// and content type, so the UI can list and preview files without downloading.
+type SourceFile struct {
+	ID          uuid.UUID `json:"id"`
+	SourceID    uuid.UUID `json:"source_id"`
+	Name        string    `json:"name"`
+	Size        int64     `json:"size"`
+	ContentType string    `json:"content_type"`
+	CreatedAt   time.Time `json:"created_at"`
+}

@@ -6,8 +6,11 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"mime"
 	"os"
+	"path"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -22,11 +25,14 @@ import (
 	"github.com/jpgomesr/NeuralVault/internal/vectorstorage"
 )
 
-// FileUpload carries the content of a single uploaded file.
+// FileUpload carries the content of a single uploaded file. Name is the file's
+// path relative to the uploaded root (e.g. "docs/intro.md"); it is sanitized
+// before use as an object-storage key or temp-file path.
 type FileUpload struct {
-	Name    string
-	Content io.Reader
-	Size    int64
+	Name        string
+	Content     io.Reader
+	Size        int64
+	ContentType string
 }
 
 // CreateRequest holds the non-file parameters for creating a source.
@@ -47,6 +53,14 @@ type Service interface {
 	List(ctx context.Context, workspaceID uuid.UUID) ([]model.Source, error)
 	ListChunks(ctx context.Context, sourceID uuid.UUID) ([]model.Chunk, error)
 	GetByID(ctx context.Context, sourceID uuid.UUID) (*model.Source, error)
+
+	// ListFiles returns the original files stored for a source.
+	ListFiles(ctx context.Context, sourceID uuid.UUID) ([]model.SourceFile, error)
+
+	// OpenFile streams the content of a single file (identified by its relative
+	// path) from object storage, returning the reader and its content type. The
+	// caller owns closing the reader.
+	OpenFile(ctx context.Context, sourceID uuid.UUID, relPath string) (io.ReadCloser, string, error)
 }
 
 // SourceService is the concrete implementation of Service.
@@ -96,11 +110,14 @@ func (s *SourceService) Create(ctx context.Context, req CreateRequest, files []F
 	}
 
 	sourceID := uuid.New()
+	sourceFiles := make([]model.SourceFile, 0, len(files))
 	for _, f := range files {
-		if err := s.storeFile(ctx, tempDir, req.WorkspaceID, sourceID, f); err != nil {
+		sf, err := s.storeFile(ctx, tempDir, req.WorkspaceID, sourceID, f)
+		if err != nil {
 			os.RemoveAll(tempDir) //nolint:errcheck
 			return nil, err
 		}
+		sourceFiles = append(sourceFiles, sf)
 	}
 
 	minioPrefix := fmt.Sprintf("%s/%s/", req.WorkspaceID, sourceID)
@@ -125,6 +142,11 @@ func (s *SourceService) Create(ctx context.Context, req CreateRequest, files []F
 	if err := s.insertSource(ctx, source); err != nil {
 		os.RemoveAll(tempDir) //nolint:errcheck
 		return nil, fmt.Errorf("inserting source: %w", err)
+	}
+
+	if err := s.insertSourceFiles(ctx, req.WorkspaceID, sourceFiles); err != nil {
+		os.RemoveAll(tempDir) //nolint:errcheck
+		return nil, fmt.Errorf("inserting source files: %w", err)
 	}
 
 	slog.InfoContext(ctx, "source created", "source_id", source.ID, "workspace_id", source.WorkspaceID)
@@ -196,6 +218,63 @@ func (s *SourceService) GetByID(ctx context.Context, sourceID uuid.UUID) (*model
 	return s.getByID(ctx, sourceID)
 }
 
+// ListFiles returns the original files stored for a source, ordered by path.
+func (s *SourceService) ListFiles(ctx context.Context, sourceID uuid.UUID) ([]model.SourceFile, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, source_id, name, size, content_type, created_at
+		FROM source_files
+		WHERE source_id = $1
+		ORDER BY name`,
+		sourceID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("querying source files: %w", err)
+	}
+	defer rows.Close()
+
+	var files []model.SourceFile
+	for rows.Next() {
+		var f model.SourceFile
+		if err := rows.Scan(&f.ID, &f.SourceID, &f.Name, &f.Size, &f.ContentType, &f.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scanning source file row: %w", err)
+		}
+		files = append(files, f)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating source file rows: %w", err)
+	}
+	return files, nil
+}
+
+// OpenFile streams a single file's content from object storage. relPath is the
+// file's path relative to the source root; it is sanitized before use.
+func (s *SourceService) OpenFile(ctx context.Context, sourceID uuid.UUID, relPath string) (io.ReadCloser, string, error) {
+	rel, err := cleanRelPath(relPath)
+	if err != nil {
+		return nil, "", err
+	}
+
+	source, err := s.getByID(ctx, sourceID)
+	if err != nil {
+		return nil, "", fmt.Errorf("loading source: %w", err)
+	}
+
+	var contentType string
+	err = s.pool.QueryRow(ctx,
+		`SELECT content_type FROM source_files WHERE source_id = $1 AND name = $2`,
+		sourceID, rel,
+	).Scan(&contentType)
+	if err != nil {
+		return nil, "", fmt.Errorf("file %q not found for source %s: %w", rel, sourceID, err)
+	}
+
+	rc, err := s.store.Download(ctx, source.URI+rel)
+	if err != nil {
+		return nil, "", fmt.Errorf("downloading %q: %w", rel, err)
+	}
+	return rc, contentType, nil
+}
+
 // indexInBackground runs the read→chunk pipeline for a newly created source.
 // It owns tempDir and removes it when done.
 // A 10-minute timeout is applied so a stuck pipeline never leaks the goroutine.
@@ -259,7 +338,7 @@ func (s *SourceService) reingestInBackground(source model.Source) {
 	}
 
 	for _, key := range keys {
-		if err := s.downloadToTemp(ctx, key, tempDir); err != nil {
+		if err := s.downloadToTemp(ctx, key, source.URI, tempDir); err != nil {
 			s.failReingest(ctx, source, err)
 			return
 		}
@@ -422,13 +501,54 @@ func (s *SourceService) updateEmbeddingModel(ctx context.Context, chunks []model
 	return nil
 }
 
-// storeFile writes an uploaded file to tempDir and uploads it to object storage.
-func (s *SourceService) storeFile(ctx context.Context, tempDir string, workspaceID, sourceID uuid.UUID, f FileUpload) error {
-	localPath := filepath.Join(tempDir, filepath.Base(f.Name))
+// cleanRelPath normalizes an uploaded file's relative path for safe use as an
+// object-storage key and temp-file path. It normalizes to forward slashes and
+// rejects absolute paths and any parent-directory traversal, so a malicious
+// filename can never escape the source's prefix or the temp directory.
+func cleanRelPath(name string) (string, error) {
+	// Normalize backslashes to forward slashes explicitly: filepath.ToSlash is a
+	// no-op on Linux, so relying on it would leave Windows-style separators (and
+	// their traversal risk) intact on the server. Object keys always use "/".
+	rel := strings.TrimPrefix(strings.ReplaceAll(name, "\\", "/"), "/")
+	if rel == "" {
+		return "", fmt.Errorf("empty file path")
+	}
+	cleaned := path.Clean(rel)
+	if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, "../") || path.IsAbs(cleaned) {
+		return "", fmt.Errorf("invalid file path %q", name)
+	}
+	return cleaned, nil
+}
+
+// resolveContentType prefers the client-provided content type and falls back to
+// the file extension, defaulting to a generic binary type.
+func resolveContentType(clientType, relPath string) string {
+	if clientType != "" {
+		return clientType
+	}
+	if byExt := mime.TypeByExtension(filepath.Ext(relPath)); byExt != "" {
+		return byExt
+	}
+	return "application/octet-stream"
+}
+
+// storeFile writes an uploaded file to tempDir (preserving its relative path)
+// and uploads it to object storage. It returns the file's metadata for
+// persistence.
+func (s *SourceService) storeFile(ctx context.Context, tempDir string, workspaceID, sourceID uuid.UUID, f FileUpload) (model.SourceFile, error) {
+	rel, err := cleanRelPath(f.Name)
+	if err != nil {
+		return model.SourceFile{}, err
+	}
+
+	localPath := filepath.Join(tempDir, filepath.FromSlash(rel))
+	if err := os.MkdirAll(filepath.Dir(localPath), 0o755); err != nil {
+		return model.SourceFile{}, fmt.Errorf("creating dir for %q: %w", rel, err)
+	}
 
 	out, err := os.Create(localPath)
 	if err != nil {
-		return fmt.Errorf("creating temp file %q: %w", f.Name, err)
+		return model.SourceFile{}, fmt.Errorf("creating temp file %q: %w", rel, err)
 	}
 
 	n, err := io.Copy(out, f.Content)
@@ -436,31 +556,45 @@ func (s *SourceService) storeFile(ctx context.Context, tempDir string, workspace
 		err = cerr
 	}
 	if err != nil {
-		return fmt.Errorf("writing file %q: %w", f.Name, err)
+		return model.SourceFile{}, fmt.Errorf("writing file %q: %w", rel, err)
 	}
 
 	uploadFile, err := os.Open(localPath)
 	if err != nil {
-		return fmt.Errorf("opening temp file %q: %w", f.Name, err)
+		return model.SourceFile{}, fmt.Errorf("opening temp file %q: %w", rel, err)
 	}
 	defer uploadFile.Close() //nolint:errcheck
 
-	key := fmt.Sprintf("%s/%s/%s", workspaceID, sourceID, filepath.Base(f.Name))
+	key := fmt.Sprintf("%s/%s/%s", workspaceID, sourceID, rel)
 	if err := s.store.Upload(ctx, key, uploadFile, n); err != nil {
-		return fmt.Errorf("uploading %q: %w", f.Name, err)
+		return model.SourceFile{}, fmt.Errorf("uploading %q: %w", rel, err)
 	}
-	return nil
+
+	return model.SourceFile{
+		ID:          uuid.New(),
+		SourceID:    sourceID,
+		Name:        rel,
+		Size:        n,
+		ContentType: resolveContentType(f.ContentType, rel),
+		CreatedAt:   time.Now(),
+	}, nil
 }
 
-// downloadToTemp downloads a single object key into tempDir preserving the filename.
-func (s *SourceService) downloadToTemp(ctx context.Context, key, tempDir string) error {
+// downloadToTemp downloads a single object key into tempDir, preserving its
+// path relative to prefix so nested directory structure is reconstructed.
+func (s *SourceService) downloadToTemp(ctx context.Context, key, prefix, tempDir string) error {
 	rc, err := s.store.Download(ctx, key)
 	if err != nil {
 		return fmt.Errorf("downloading %q: %w", key, err)
 	}
 	defer rc.Close() //nolint:errcheck
 
-	localPath := filepath.Join(tempDir, filepath.Base(key))
+	rel := strings.TrimPrefix(key, prefix)
+	localPath := filepath.Join(tempDir, filepath.FromSlash(rel))
+	if err := os.MkdirAll(filepath.Dir(localPath), 0o755); err != nil {
+		return fmt.Errorf("creating dir for %q: %w", key, err)
+	}
+
 	out, err := os.Create(localPath)
 	if err != nil {
 		return fmt.Errorf("creating temp file for %q: %w", key, err)
@@ -482,6 +616,20 @@ func (s *SourceService) insertSource(ctx context.Context, src model.Source) erro
 	)
 	if err != nil {
 		return fmt.Errorf("insert sources: %w", err)
+	}
+	return nil
+}
+
+func (s *SourceService) insertSourceFiles(ctx context.Context, workspaceID uuid.UUID, files []model.SourceFile) error {
+	for _, f := range files {
+		_, err := s.pool.Exec(ctx, `
+			INSERT INTO source_files (id, source_id, workspace_id, name, size, content_type, created_at)
+			VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+			f.ID, f.SourceID, workspaceID, f.Name, f.Size, f.ContentType, f.CreatedAt,
+		)
+		if err != nil {
+			return fmt.Errorf("insert source_files: %w", err)
+		}
 	}
 	return nil
 }

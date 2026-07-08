@@ -11,6 +11,8 @@ func Routes(h *Handler) chi.Router {
 	r.Get("/", h.ListSources)
 	r.Post("/{id}/ingest", h.IngestSource)
 	r.Get("/{id}/chunks", h.ListChunks)
+	r.Get("/{id}/files", h.ListFiles)
+	r.Get("/{id}/files/content", h.GetFileContent)
 	r.Get("/{id}/status", h.StreamStatus)
 	return r
 }
