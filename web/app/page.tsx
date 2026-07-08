@@ -55,7 +55,7 @@ export default function Home() {
   }
 
   if (me === undefined) return <div className="center hint">Loading…</div>;
-  if (me === null) return <SignIn />;
+  if (me === null) return <SignIn onSignedIn={() => getMe().then(setMe)} />;
 
   return (
     <div className="app">

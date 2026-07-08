@@ -5,6 +5,7 @@ import {
   getMe,
   listSources,
   listWorkspaces,
+  login,
   logout,
   streamQuery,
   uploadSource,
@@ -74,6 +75,28 @@ describe("logout", () => {
     fetchMock.mockResolvedValueOnce(jsonResponse(null));
     await logout();
     expect(fetchMock).toHaveBeenCalledWith("/api/auth/logout", { method: "POST" });
+  });
+});
+
+describe("login", () => {
+  it("POSTs credentials as JSON", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(null, { status: 204 }));
+    await login("a@b.com", "pw");
+    expect(fetchMock).toHaveBeenCalledWith("/api/auth/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: "a@b.com", password: "pw" }),
+    });
+  });
+
+  it("throws a specific message on 401", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(null, { ok: false, status: 401 }));
+    await expect(login("a@b.com", "wrong")).rejects.toThrow("invalid email or password");
+  });
+
+  it("throws on other error statuses", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(null, { ok: false, status: 500 }));
+    await expect(login("a@b.com", "pw")).rejects.toThrow("login failed: 500");
   });
 });
 
