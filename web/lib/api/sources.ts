@@ -35,19 +35,87 @@ export interface UploadResult {
   status_url: string;
 }
 
+// UploadFile pairs a file with the path it should keep relative to the source
+// root (e.g. "guide/intro.md"). The backend preserves this structure.
+export interface UploadFile {
+  file: File;
+  path: string;
+}
+
+// MAX_UPLOAD_BYTES mirrors the API's SERVER_MAX_UPLOAD_BYTES default (100 MiB).
+// It is a client-side pre-check only; the server enforces the real limit, so a
+// mismatch just means a batch that slips past here is rejected server-side.
+export const MAX_UPLOAD_BYTES = 100 * 1024 * 1024;
+
 export async function uploadSource(
   workspaceId: string,
   name: string,
-  files: FileList,
+  files: UploadFile[],
 ): Promise<UploadResult> {
   const form = new FormData();
   form.append("workspace_id", workspaceId);
   form.append("name", name);
-  for (const file of Array.from(files)) form.append("files", file);
+  // The third argument sets each part's filename to the relative path, which the
+  // backend reads (and sanitizes) to preserve directory structure.
+  for (const { file, path } of files) form.append("files", file, path);
 
   const res = await fetch("/api/sources", { method: "POST", body: form });
-  if (!res.ok) throw new Error(`upload failed: ${res.status}`);
+  if (!res.ok) {
+    const detail = (await res.text().catch(() => "")).trim();
+    throw new Error(detail || `upload failed: ${res.status}`);
+  }
   return res.json();
+}
+
+// UploadGroup is one source-to-be: a name and the files that belong to it.
+export interface UploadGroup {
+  name: string;
+  files: UploadFile[];
+}
+
+/**
+ * filesToUploadFiles maps a flat file selection to UploadFile[] keyed by each
+ * file's own name (no directory structure). Used by the plain file picker.
+ */
+export function filesToUploadFiles(fileList: FileList): UploadFile[] {
+  return Array.from(fileList).map((file) => ({ file, path: file.name }));
+}
+
+/**
+ * groupFilesByFolder splits a directory selection into one UploadGroup per
+ * source. Files directly under the selected folder form a single source named
+ * after that folder; each top-level subfolder becomes its own source named
+ * after the subfolder, with paths kept relative to it.
+ */
+export function groupFilesByFolder(fileList: FileList): UploadGroup[] {
+  const groups = new Map<string, UploadFile[]>();
+
+  for (const file of Array.from(fileList)) {
+    const rel = file.webkitRelativePath || file.name;
+    const segments = rel.split("/");
+
+    let name: string;
+    let path: string;
+    if (segments.length <= 2) {
+      // "folder/file" — directly under the selected folder.
+      name = segments[0];
+      path = segments[segments.length - 1];
+    } else {
+      // "folder/sub/.../file" — each top-level subfolder is its own source.
+      name = segments[1];
+      path = segments.slice(2).join("/");
+    }
+
+    const existing = groups.get(name) ?? [];
+    existing.push({ file, path });
+    groups.set(name, existing);
+  }
+
+  return Array.from(groups.entries()).map(([name, files]) => ({ name, files }));
+}
+
+export function totalBytes(files: UploadFile[]): number {
+  return files.reduce((sum, { file }) => sum + file.size, 0);
 }
 
 /**

@@ -1,14 +1,25 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   fetchSourceFileText,
+  filesToUploadFiles,
+  groupFilesByFolder,
   listSourceFiles,
   listSources,
   sourceFileContentUrl,
+  totalBytes,
   uploadSource,
   watchSourceStatus,
 } from "./sources";
 import { jsonResponse } from "./test-helpers";
 import type { SourceProgress } from "../types";
+
+/** fileWithPath builds a File carrying a webkitRelativePath (which the ctor can't set). */
+function fileWithPath(relativePath: string): File {
+  const name = relativePath.split("/").pop() ?? relativePath;
+  const file = new File(["x"], name);
+  Object.defineProperty(file, "webkitRelativePath", { value: relativePath });
+  return file;
+}
 
 const fetchMock = vi.fn();
 
@@ -41,11 +52,12 @@ describe("listSources", () => {
 });
 
 describe("uploadSource", () => {
-  const fileList = (...files: File[]) => files as unknown as FileList;
-
-  it("POSTs a FormData body with the workspace, name and files", async () => {
+  it("POSTs a FormData body with the workspace, name and files using relative paths", async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse({ source: { ID: "s1" }, status_url: "/s" }));
-    const files = fileList(new File(["hi"], "a.txt"), new File(["yo"], "b.txt"));
+    const files = [
+      { file: new File(["hi"], "a.txt"), path: "docs/a.txt" },
+      { file: new File(["yo"], "b.txt"), path: "b.txt" },
+    ];
 
     const result = await uploadSource("w1", "My source", files);
 
@@ -57,12 +69,73 @@ describe("uploadSource", () => {
     expect(form).toBeInstanceOf(FormData);
     expect(form.get("workspace_id")).toBe("w1");
     expect(form.get("name")).toBe("My source");
-    expect(form.getAll("files")).toHaveLength(2);
+    const parts = form.getAll("files") as File[];
+    expect(parts).toHaveLength(2);
+    // The relative path is used as each part's filename.
+    expect(parts[0].name).toBe("docs/a.txt");
   });
 
-  it("throws on an error status", async () => {
+  it("surfaces the server error body on a failed upload", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse("name is required", { ok: false, status: 400 }));
+    await expect(uploadSource("w1", "n", [])).rejects.toThrow("name is required");
+  });
+
+  it("falls back to the status code when there is no error body", async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse(null, { ok: false, status: 413 }));
-    await expect(uploadSource("w1", "n", fileList())).rejects.toThrow("upload failed: 413");
+    await expect(uploadSource("w1", "n", [])).rejects.toThrow("upload failed: 413");
+  });
+});
+
+describe("filesToUploadFiles", () => {
+  const asFileList = (...files: File[]) => files as unknown as FileList;
+
+  it("maps each file to its own name with no directory structure", () => {
+    const result = filesToUploadFiles(asFileList(new File(["a"], "a.txt"), new File(["b"], "b.md")));
+    expect(result.map((f) => f.path)).toEqual(["a.txt", "b.md"]);
+    expect(result[0].file.name).toBe("a.txt");
+  });
+});
+
+describe("totalBytes", () => {
+  it("sums the sizes of the underlying files", () => {
+    const files = [
+      { file: new File(["abc"], "a"), path: "a" },
+      { file: new File(["de"], "b"), path: "b" },
+    ];
+    expect(totalBytes(files)).toBe(5);
+  });
+});
+
+describe("groupFilesByFolder", () => {
+  const asFileList = (...files: File[]) => files as unknown as FileList;
+
+  it("falls back to the file name when there is no relative path", () => {
+    // A loose file (no webkitRelativePath) becomes a single-file group.
+    const groups = groupFilesByFolder(asFileList(new File(["x"], "loose.md")));
+    expect(groups).toEqual([{ name: "loose.md", files: [expect.objectContaining({ path: "loose.md" })] }]);
+  });
+
+  it("makes one source named after the folder for files directly inside it", () => {
+    const groups = groupFilesByFolder(
+      asFileList(fileWithPath("dataset/a.md"), fileWithPath("dataset/b.md")),
+    );
+    expect(groups).toHaveLength(1);
+    expect(groups[0].name).toBe("dataset");
+    expect(groups[0].files.map((f) => f.path)).toEqual(["a.md", "b.md"]);
+  });
+
+  it("makes one source per top-level subfolder, keeping nested paths", () => {
+    const groups = groupFilesByFolder(
+      asFileList(
+        fileWithPath("parent/subA/x.md"),
+        fileWithPath("parent/subA/deep/y.md"),
+        fileWithPath("parent/subB/z.md"),
+      ),
+    );
+    const byName = Object.fromEntries(groups.map((g) => [g.name, g]));
+    expect(Object.keys(byName).sort()).toEqual(["subA", "subB"]);
+    expect(byName.subA.files.map((f) => f.path).sort()).toEqual(["deep/y.md", "x.md"]);
+    expect(byName.subB.files.map((f) => f.path)).toEqual(["z.md"]);
   });
 });
 

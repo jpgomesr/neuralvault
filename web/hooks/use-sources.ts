@@ -1,5 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { listSourceFiles, listSources, uploadSource } from "@/lib/api/sources";
+import {
+  listSourceFiles,
+  listSources,
+  uploadSource,
+  type UploadFile,
+} from "@/lib/api/sources";
 
 export const sourcesQueryKey = (workspaceId: string) => ["sources", workspaceId] as const;
 
@@ -27,7 +32,7 @@ export function useSourceFiles(sourceId: string, enabled = true) {
 export function useUploadSourceMutation(workspaceId: string) {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ name, files }: { name: string; files: FileList }) =>
+    mutationFn: ({ name, files }: { name: string; files: UploadFile[] }) =>
       uploadSource(workspaceId, name, files),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: sourcesQueryKey(workspaceId) });
