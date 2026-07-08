@@ -1,63 +1,50 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { listSources, uploadSource, watchSourceStatus } from "@/lib/api";
-import type { Source } from "@/lib/types";
+import { watchSourceStatus } from "@/lib/api/sources";
+import { sourcesQueryKey, useSources, useUploadSourceMutation } from "@/hooks/use-sources";
 
 /**
  * Sidebar lists a workspace's sources and lets the user upload a new one,
  * showing live indexing status streamed from the API.
  */
 export default function Sidebar({ workspaceId }: { workspaceId: string }) {
-  const [sources, setSources] = useState<Source[]>([]);
+  const queryClient = useQueryClient();
+  const { data: sources = [], error: sourcesError } = useSources(workspaceId);
+  const uploadMutation = useUploadSourceMutation(workspaceId);
   const [name, setName] = useState("");
   const [files, setFiles] = useState<FileList | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const [liveStatus, setLiveStatus] = useState<Record<string, string>>({});
-
-  const refresh = useCallback(async () => {
-    try {
-      setSources(await listSources(workspaceId));
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "failed to load sources");
-    }
-  }, [workspaceId]);
-
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- resets local state before refreshing sources
-    setSources([]);
-    setLiveStatus({});
-    void refresh();
-  }, [refresh]);
 
   async function onUpload(e: React.FormEvent) {
     e.preventDefault();
     if (!files || files.length === 0 || !name) return;
-    setBusy(true);
-    setError(null);
     try {
-      const { source } = await uploadSource(workspaceId, name, files);
+      const { source } = await uploadMutation.mutateAsync({ name, files });
       setName("");
       setFiles(null);
       setLiveStatus((s) => ({ ...s, [source.ID]: "indexing" }));
-      await refresh();
       watchSourceStatus(source.ID, {
         onProgress: () => setLiveStatus((s) => ({ ...s, [source.ID]: "indexing" })),
         onDone: () => {
           setLiveStatus((s) => ({ ...s, [source.ID]: "indexed" }));
-          void refresh();
+          void queryClient.invalidateQueries({ queryKey: sourcesQueryKey(workspaceId) });
         },
         onError: () => setLiveStatus((s) => ({ ...s, [source.ID]: "error" })),
       });
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "upload failed");
-    } finally {
-      setBusy(false);
+    } catch {
+      // surfaced below via uploadMutation.error
     }
   }
+
+  const busy = uploadMutation.isPending;
+  const error =
+    (uploadMutation.error instanceof Error && uploadMutation.error.message) ||
+    (sourcesError instanceof Error && sourcesError.message) ||
+    null;
 
   return (
     <aside className="sidebar">

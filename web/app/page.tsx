@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import Chat from "@/components/Chat";
 import Sidebar from "@/components/Sidebar";
 import SignIn from "@/components/SignIn";
@@ -13,49 +13,33 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { createWorkspace, getMe, listWorkspaces, logout } from "@/lib/api";
-import type { Me, Workspace } from "@/lib/types";
+import { useLogoutMutation, useMe } from "@/hooks/use-me";
+import { useCreateWorkspaceMutation, useWorkspaces } from "@/hooks/use-workspaces";
 
 export default function Home() {
-  // undefined = loading, null = unauthenticated, Me = signed in.
-  const [me, setMe] = useState<Me | null | undefined>(undefined);
-  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
+  const { me } = useMe();
+  const { data: workspaces = [] } = useWorkspaces(!!me);
+  const createWorkspaceMutation = useCreateWorkspaceMutation();
+  const logoutMutation = useLogoutMutation();
   const [activeId, setActiveId] = useState<string>("");
 
   useEffect(() => {
-    getMe()
-      .then(setMe)
-      .catch(() => setMe(null));
-  }, []);
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- defaults to the first workspace once the list loads
+    setActiveId((prev) => prev || workspaces[0]?.ID || "");
+  }, [workspaces]);
 
-  const loadWorkspaces = useCallback(async () => {
-    const list = await listWorkspaces();
-    setWorkspaces(list);
-    setActiveId((prev) => prev || list[0]?.ID || "");
-  }, []);
-
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- loads workspaces once `me` resolves
-    if (me) void loadWorkspaces();
-  }, [me, loadWorkspaces]);
-
-  async function onCreateWorkspace() {
+  function onCreateWorkspace() {
     const name = window.prompt("New workspace name");
     if (!name) return;
-    const ws = await createWorkspace(name);
-    await loadWorkspaces();
-    setActiveId(ws.ID);
+    createWorkspaceMutation.mutate(name, { onSuccess: (ws) => setActiveId(ws.ID) });
   }
 
-  async function onLogout() {
-    await logout();
-    setMe(null);
-    setWorkspaces([]);
-    setActiveId("");
+  function onLogout() {
+    logoutMutation.mutate(undefined, { onSuccess: () => setActiveId("") });
   }
 
   if (me === undefined) return <div className="center hint">Loading…</div>;
-  if (me === null) return <SignIn onSignedIn={() => getMe().then(setMe)} />;
+  if (me === null) return <SignIn />;
 
   return (
     <div className="app">

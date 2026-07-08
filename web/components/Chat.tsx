@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { streamQuery } from "@/lib/api";
+import { streamQuery } from "@/lib/api/query";
 import type { SourceChunk } from "@/lib/types";
 
 interface Message {

@@ -11,26 +11,16 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { login } from "@/lib/api";
+import { useLoginMutation } from "@/hooks/use-me";
 
-export default function SignIn({ onSignedIn }: { onSignedIn: () => void }) {
+export default function SignIn() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  const loginMutation = useLoginMutation();
 
-  async function onSubmit(e: React.FormEvent) {
+  function onSubmit(e: React.FormEvent) {
     e.preventDefault();
-    setBusy(true);
-    setError(null);
-    try {
-      await login(email, password);
-      onSignedIn();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "sign in failed");
-    } finally {
-      setBusy(false);
-    }
+    loginMutation.mutate({ email, password });
   }
 
   return (
@@ -62,9 +52,15 @@ export default function SignIn({ onSignedIn }: { onSignedIn: () => void }) {
                 required
               />
             </div>
-            {error && <div className="error">{error}</div>}
-            <Button type="submit" disabled={busy}>
-              {busy ? "Signing in…" : "Sign in"}
+            {loginMutation.error && (
+              <div className="error">
+                {loginMutation.error instanceof Error
+                  ? loginMutation.error.message
+                  : "sign in failed"}
+              </div>
+            )}
+            <Button type="submit" disabled={loginMutation.isPending}>
+              {loginMutation.isPending ? "Signing in…" : "Sign in"}
             </Button>
           </form>
         </CardContent>
