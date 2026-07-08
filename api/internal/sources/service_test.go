@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
@@ -29,6 +30,7 @@ import (
 	"github.com/jpgomesr/NeuralVault/internal/config"
 	"github.com/jpgomesr/NeuralVault/internal/embedding"
 	"github.com/jpgomesr/NeuralVault/internal/model"
+	"github.com/jpgomesr/NeuralVault/internal/objectstorage"
 	minioclient "github.com/jpgomesr/NeuralVault/internal/objectstorage/minio"
 	"github.com/jpgomesr/NeuralVault/internal/sourcereader"
 	"github.com/jpgomesr/NeuralVault/internal/storage"
@@ -139,6 +141,121 @@ func (p selectiveFailingPool) Exec(ctx context.Context, sql string, args ...any)
 		return pgconn.CommandTag{}, fmt.Errorf("injected exec failure for embedding_model")
 	}
 	return p.Pool.Exec(ctx, sql, args...)
+}
+
+// sourceFilesFailingPool fails Exec calls that touch source_files, so tests can
+// exercise the metadata-insert failure path. Other statements delegate normally.
+type sourceFilesFailingPool struct{ storage.Pool }
+
+func (p sourceFilesFailingPool) Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
+	if strings.Contains(sql, "source_files") {
+		return pgconn.CommandTag{}, fmt.Errorf("injected source_files failure")
+	}
+	return p.Pool.Exec(ctx, sql, args...)
+}
+
+// sourceFilesQueryFailingPool fails Query calls that touch source_files, so the
+// ListFiles query-error path can be exercised.
+type sourceFilesQueryFailingPool struct{ storage.Pool }
+
+func (p sourceFilesQueryFailingPool) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
+	if strings.Contains(sql, "source_files") {
+		return nil, fmt.Errorf("injected source_files query failure")
+	}
+	return p.Pool.Query(ctx, sql, args...)
+}
+
+// errReader always fails on Read, used to exercise copy-error branches.
+type errReader struct{}
+
+func (errReader) Read([]byte) (int, error) { return 0, errors.New("read boom") }
+
+// fakeStore is an in-memory objectstorage.Client with optional error injection,
+// so storage-layer failures can be exercised without a MinIO container.
+type fakeStore struct {
+	mu              sync.Mutex
+	objects         map[string][]byte
+	uploadErr       error
+	downloadErr     error
+	downloadReadErr bool
+	listErr         error
+}
+
+func newFakeStore() *fakeStore { return &fakeStore{objects: map[string][]byte{}} }
+
+func (f *fakeStore) Upload(_ context.Context, key string, r io.Reader, _ int64) error {
+	if f.uploadErr != nil {
+		return f.uploadErr
+	}
+	b, err := io.ReadAll(r)
+	if err != nil {
+		return err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.objects[key] = b
+	return nil
+}
+
+func (f *fakeStore) Download(_ context.Context, key string) (io.ReadCloser, error) {
+	if f.downloadErr != nil {
+		return nil, f.downloadErr
+	}
+	if f.downloadReadErr {
+		return io.NopCloser(errReader{}), nil
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	b, ok := f.objects[key]
+	if !ok {
+		return nil, fmt.Errorf("object not found: %s", key)
+	}
+	return io.NopCloser(bytes.NewReader(b)), nil
+}
+
+func (f *fakeStore) ListObjects(_ context.Context, prefix string) ([]string, error) {
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var keys []string
+	for k := range f.objects {
+		if strings.HasPrefix(k, prefix) {
+			keys = append(keys, k)
+		}
+	}
+	return keys, nil
+}
+
+func (f *fakeStore) Delete(_ context.Context, key string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.objects, key)
+	return nil
+}
+
+func (f *fakeStore) HealthCheck(_ context.Context) error { return nil }
+
+// buildSvcWithStore builds a SourceService with a custom pool and object store,
+// a real chunker on sharedPool, and no-op embedder/vector store.
+func buildSvcWithStore(_ context.Context, t *testing.T, pool storage.Pool, store objectstorage.Client) *SourceService {
+	t.Helper()
+	splitters := map[chunking.ContentType]chunking.Splitter{
+		chunking.ContentTypeMarkdown:  markdown.New(),
+		chunking.ContentTypePlaintext: text.New(),
+	}
+	return NewSourceService(
+		pool,
+		store,
+		sourcereader.NewFileReader(),
+		chunking.NewChunkService(sharedPool, splitters),
+		NewProgressBus(),
+		&stubEmbedder{dim: 768},
+		stubVectorStore{},
+		"test",
+		"nomic-embed-text",
+	)
 }
 
 var (
@@ -422,6 +539,139 @@ func TestServiceFiles_RoundTrip(t *testing.T) {
 	if _, _, err := svc.OpenFile(ctx, src.ID, "../escape"); err == nil {
 		t.Error("expected OpenFile to reject traversal path")
 	}
+}
+
+func TestServiceStoreFile_UploadError(t *testing.T) {
+	ctx := context.Background()
+	wid := insertWS(ctx, t)
+	store := newFakeStore()
+	store.uploadErr = errors.New("upload boom")
+	svc := buildSvcWithStore(ctx, t, sharedPool, store)
+
+	_, err := svc.Create(ctx, CreateRequest{WorkspaceID: wid, Name: "x"}, []FileUpload{
+		{Name: "a.md", Content: bytes.NewBufferString("hi"), Size: 2},
+	})
+	if err == nil {
+		t.Fatal("expected an upload error from Create")
+	}
+}
+
+func TestServiceStoreFile_WriteError(t *testing.T) {
+	ctx := context.Background()
+	wid := insertWS(ctx, t)
+	svc := buildSvcWithStore(ctx, t, sharedPool, newFakeStore())
+
+	_, err := svc.Create(ctx, CreateRequest{WorkspaceID: wid, Name: "x"}, []FileUpload{
+		{Name: "a.md", Content: errReader{}, Size: 2},
+	})
+	if err == nil {
+		t.Fatal("expected a write error from Create")
+	}
+}
+
+func TestServiceStoreFile_MkdirError(t *testing.T) {
+	ctx := context.Background()
+	wid := insertWS(ctx, t)
+	svc := buildSvcWithStore(ctx, t, sharedPool, newFakeStore())
+
+	// "a" is written as a file, then "a/b.md" needs "a" to be a directory —
+	// MkdirAll fails because a file already occupies that path.
+	_, err := svc.Create(ctx, CreateRequest{WorkspaceID: wid, Name: "x"}, []FileUpload{
+		{Name: "a", Content: bytes.NewBufferString("file"), Size: 4},
+		{Name: "a/b.md", Content: bytes.NewBufferString("nested"), Size: 6},
+	})
+	if err == nil {
+		t.Fatal("expected a mkdir error from conflicting file/dir paths")
+	}
+}
+
+func TestServiceListFiles_QueryError(t *testing.T) {
+	ctx := context.Background()
+	svc := buildSvcWithStore(ctx, t, sourceFilesQueryFailingPool{Pool: sharedPool}, newFakeStore())
+
+	if _, err := svc.ListFiles(ctx, uuid.New()); err == nil {
+		t.Fatal("expected a query error from ListFiles")
+	}
+}
+
+func TestServiceReingest_DownloadReadError(t *testing.T) {
+	ctx := context.Background()
+	wid := insertWS(ctx, t)
+	store := newFakeStore()
+	svc := buildSvcWithStore(ctx, t, sharedPool, store)
+
+	src, err := svc.Create(ctx, CreateRequest{WorkspaceID: wid, Name: "x"}, []FileUpload{
+		{Name: "a.md", Content: bytes.NewBufferString("hi"), Size: 2},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	awaitIndexed(ctx, t, svc, src.ID)
+
+	// The object streams but fails mid-read, so copying it to temp errors.
+	store.downloadReadErr = true
+	if err := svc.Ingest(ctx, src.ID); err != nil {
+		t.Fatalf("Ingest: %v", err)
+	}
+	awaitError(ctx, t, svc, src.ID)
+}
+
+func TestServiceCreate_InsertFilesFailure(t *testing.T) {
+	ctx := context.Background()
+	wid := insertWS(ctx, t)
+	svc := buildSvcWithStore(ctx, t, sourceFilesFailingPool{Pool: sharedPool}, newFakeStore())
+
+	_, err := svc.Create(ctx, CreateRequest{WorkspaceID: wid, Name: "x"}, []FileUpload{
+		{Name: "a.md", Content: bytes.NewBufferString("hi"), Size: 2},
+	})
+	if err == nil {
+		t.Fatal("expected a source_files insert failure from Create")
+	}
+}
+
+func TestServiceOpenFile_Errors(t *testing.T) {
+	ctx := context.Background()
+	wid := insertWS(ctx, t)
+	svc := buildSvcWithStore(ctx, t, sharedPool, newFakeStore())
+
+	src, err := svc.Create(ctx, CreateRequest{WorkspaceID: wid, Name: "x"}, []FileUpload{
+		{Name: "a.md", Content: bytes.NewBufferString("hi"), Size: 2, ContentType: "text/markdown"},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	awaitIndexed(ctx, t, svc, src.ID)
+
+	// A file name that isn't recorded for the source has no metadata row.
+	if _, _, err := svc.OpenFile(ctx, src.ID, "missing.md"); err == nil {
+		t.Error("expected error opening an unknown file")
+	}
+	// An unknown source fails at GetByID.
+	if _, _, err := svc.OpenFile(ctx, uuid.New(), "a.md"); err == nil {
+		t.Error("expected error opening a file for an unknown source")
+	}
+}
+
+func TestServiceReingest_DownloadError(t *testing.T) {
+	ctx := context.Background()
+	wid := insertWS(ctx, t)
+	store := newFakeStore()
+	svc := buildSvcWithStore(ctx, t, sharedPool, store)
+
+	src, err := svc.Create(ctx, CreateRequest{WorkspaceID: wid, Name: "x"}, []FileUpload{
+		{Name: "a.md", Content: bytes.NewBufferString("hi"), Size: 2},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	awaitIndexed(ctx, t, svc, src.ID)
+
+	// Re-ingest now fails while downloading objects back from storage.
+	store.downloadErr = errors.New("download boom")
+	if err := svc.Ingest(ctx, src.ID); err != nil {
+		t.Fatalf("Ingest: %v", err)
+	}
+	awaitError(ctx, t, svc, src.ID)
 }
 
 func TestServiceCreate_BadWorkspace(t *testing.T) {
