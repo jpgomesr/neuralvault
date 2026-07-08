@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -30,12 +31,16 @@ type stubIDP struct {
 	key      *rsa.PrivateKey
 
 	// knobs for exercising failure branches
-	signKey      *rsa.PrivateKey // signs the ID token; defaults to key (matches JWKS)
-	subject      string
-	email        string
-	name         string
-	omitIDToken  bool // token response carries no id_token
-	tokenFailure bool // token endpoint returns 400
+	signKey         *rsa.PrivateKey // signs the ID token; defaults to key (matches JWKS)
+	subject         string
+	email           string
+	name            string
+	omitIDToken     bool // token response carries no id_token
+	tokenFailure    bool // token endpoint returns 400 (code exchange)
+	passwordDenied  bool // token endpoint returns 400 invalid_grant (password grant)
+	gotGrantType    string
+	gotUsername     string
+	gotPassword     string
 }
 
 func newStubIDP(t *testing.T, clientID string) *stubIDP {
@@ -67,7 +72,18 @@ func newStubIDP(t *testing.T, clientID string) *stubIDP {
 	mux.HandleFunc("/jwks", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, idp.jwks())
 	})
-	mux.HandleFunc("/token", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("/token", func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		idp.gotGrantType = r.FormValue("grant_type")
+		idp.gotUsername = r.FormValue("username")
+		idp.gotPassword = r.FormValue("password")
+
+		if idp.gotGrantType == "password" && idp.passwordDenied {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid_grant"})
+			return
+		}
 		if idp.tokenFailure {
 			http.Error(w, "invalid_grant", http.StatusBadRequest)
 			return
@@ -245,5 +261,87 @@ func TestExchange_MissingSubject(t *testing.T) {
 	_, _, err := svc.Exchange(context.Background(), "auth-code")
 	if err == nil || !strings.Contains(err.Error(), "missing subject") {
 		t.Fatalf("Exchange: got %v, want a missing subject error", err)
+	}
+}
+
+func TestPasswordLogin_ProvisionsUser(t *testing.T) {
+	ctx := context.Background()
+	idp := newStubIDP(t, "test-client")
+	svc := serviceFromIDP(t, idp)
+
+	user, created, err := svc.PasswordLogin(ctx, "dev@neuralvault.local", "dev")
+	if err != nil {
+		t.Fatalf("PasswordLogin: %v", err)
+	}
+	cleanupUser(t, user.ID)
+
+	if !created {
+		t.Error("expected the user to be provisioned on first login")
+	}
+	if idp.gotGrantType != "password" || idp.gotUsername != "dev@neuralvault.local" || idp.gotPassword != "dev" {
+		t.Fatalf("token request: got grant_type=%q username=%q password=%q", idp.gotGrantType, idp.gotUsername, idp.gotPassword)
+	}
+	if user.Email != idp.email || user.Name != idp.name {
+		t.Fatalf("resolved user: got %+v, want email=%s name=%s", user, idp.email, idp.name)
+	}
+
+	// A second login with the same subject reuses the existing user.
+	again, created, err := svc.PasswordLogin(ctx, "dev@neuralvault.local", "dev")
+	if err != nil {
+		t.Fatalf("second PasswordLogin: %v", err)
+	}
+	if created {
+		t.Error("expected the second login to reuse the existing user")
+	}
+	if again.ID != user.ID {
+		t.Fatalf("second login resolved user %s, want %s", again.ID, user.ID)
+	}
+}
+
+func TestPasswordLogin_InvalidCredentials(t *testing.T) {
+	idp := newStubIDP(t, "test-client")
+	idp.passwordDenied = true
+	svc := serviceFromIDP(t, idp)
+
+	_, _, err := svc.PasswordLogin(context.Background(), "dev@neuralvault.local", "wrong")
+	if !errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("PasswordLogin: got %v, want ErrInvalidCredentials", err)
+	}
+}
+
+func TestPasswordLogin_NoIDToken(t *testing.T) {
+	idp := newStubIDP(t, "test-client")
+	idp.omitIDToken = true
+	svc := serviceFromIDP(t, idp)
+
+	_, _, err := svc.PasswordLogin(context.Background(), "dev@neuralvault.local", "dev")
+	if err == nil || !strings.Contains(err.Error(), "no id_token") {
+		t.Fatalf("PasswordLogin: got %v, want a missing id_token error", err)
+	}
+}
+
+func TestPasswordLogin_InvalidSignature(t *testing.T) {
+	idp := newStubIDP(t, "test-client")
+	otherKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	idp.signKey = otherKey
+	svc := serviceFromIDP(t, idp)
+
+	_, _, err = svc.PasswordLogin(context.Background(), "dev@neuralvault.local", "dev")
+	if err == nil || !strings.Contains(err.Error(), "verifying id token") {
+		t.Fatalf("PasswordLogin: got %v, want a verifying id token error", err)
+	}
+}
+
+func TestPasswordLogin_MissingSubject(t *testing.T) {
+	idp := newStubIDP(t, "test-client")
+	idp.subject = ""
+	svc := serviceFromIDP(t, idp)
+
+	_, _, err := svc.PasswordLogin(context.Background(), "dev@neuralvault.local", "dev")
+	if err == nil || !strings.Contains(err.Error(), "missing subject") {
+		t.Fatalf("PasswordLogin: got %v, want a missing subject error", err)
 	}
 }

@@ -28,10 +28,21 @@ type Service interface {
 	// verifies the ID token, and JIT-provisions the user. It returns the
 	// resolved user, whether they were newly created, and any error.
 	Exchange(ctx context.Context, code string) (user *model.User, created bool, err error)
+	// PasswordLogin authenticates via the OAuth2 Resource Owner Password
+	// Credentials grant against the provider's token endpoint, verifies the
+	// returned ID token identically to Exchange, and JIT-provisions the user.
+	// It returns the resolved user, whether they were newly created, and any
+	// error; a rejected email/password pair is reported as
+	// ErrInvalidCredentials.
+	PasswordLogin(ctx context.Context, email, password string) (user *model.User, created bool, err error)
 	// HealthCheck verifies the OIDC provider (Keycloak in dev) is reachable by
 	// requesting its discovery document.
 	HealthCheck(ctx context.Context) error
 }
+
+// ErrInvalidCredentials is returned by PasswordLogin when the provider rejects
+// the given email/password pair, as opposed to a provider or network failure.
+var ErrInvalidCredentials = errors.New("invalid email or password")
 
 // AuthService implements Service against any standard OIDC provider discovered
 // from cfg.Auth.IssuerURL. It contains no provider-specific code.
@@ -111,6 +122,28 @@ func (s *AuthService) Exchange(ctx context.Context, code string) (*model.User, b
 	if err != nil {
 		return nil, false, fmt.Errorf("code exchange: %w", err)
 	}
+	return s.resolveToken(ctx, token)
+}
+
+// PasswordLogin authenticates via the OAuth2 Resource Owner Password
+// Credentials grant (RFC 6749 §4.3) against the provider's token endpoint —
+// standard OAuth2, not a Keycloak-specific API. The client secret is sent
+// server-side only; it never reaches the browser.
+func (s *AuthService) PasswordLogin(ctx context.Context, email, password string) (*model.User, bool, error) {
+	token, err := s.oauth.PasswordCredentialsToken(ctx, email, password)
+	if err != nil {
+		var retrieveErr *oauth2.RetrieveError
+		if errors.As(err, &retrieveErr) && retrieveErr.ErrorCode == "invalid_grant" {
+			return nil, false, ErrInvalidCredentials
+		}
+		return nil, false, fmt.Errorf("password grant: %w", err)
+	}
+	return s.resolveToken(ctx, token)
+}
+
+// resolveToken extracts and verifies the ID token carried by token (minted by
+// either the authorization-code or password grant), then resolves the user.
+func (s *AuthService) resolveToken(ctx context.Context, token *oauth2.Token) (*model.User, bool, error) {
 	rawID, ok := token.Extra("id_token").(string)
 	if !ok {
 		return nil, false, errors.New("no id_token in token response")

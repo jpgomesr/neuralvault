@@ -4,11 +4,13 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"time"
 
 	"github.com/jpgomesr/NeuralVault/internal/logger"
+	"github.com/jpgomesr/NeuralVault/internal/model"
 )
 
 const (
@@ -111,13 +113,74 @@ func (h *Handler) Callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, err := h.signer.Issue(user.ID, user.Email)
-	if err != nil {
+	if err := h.issueSession(w, user); err != nil {
 		slog.ErrorContext(r.Context(), "issuing session failed", "err", err, "user_id", user.ID, "request_id", logger.RequestID(r.Context()))
 		http.Error(w, "authentication failed", http.StatusInternalServerError)
 		return
 	}
 
+	slog.InfoContext(r.Context(), "login succeeded", "user_id", user.ID, "provisioned", created, "request_id", logger.RequestID(r.Context()))
+	http.Redirect(w, r, h.postLoginURL, http.StatusFound)
+}
+
+// tokenRequest is the JSON body for POST /auth/token.
+type tokenRequest struct {
+	Email    string `json:"email"`
+	Password string `json:"password"`
+}
+
+// Token godoc
+//
+// It authenticates the given email/password directly against the OIDC
+// provider via the Resource Owner Password Credentials grant (server-side;
+// the client secret never reaches the browser), then issues the same
+// nv_session cookie used by the authorization-code flow. It exists alongside
+// (not in place of) GET /auth/login for a native, non-redirecting sign-in UI.
+//
+// @Summary Native email/password login
+// @Description Authenticates against the OIDC provider's token endpoint via the password grant and issues the nv_session cookie.
+// @Tags auth
+// @Accept json
+// @Param body body tokenRequest true "Credentials"
+// @Success 204
+// @Failure 400
+// @Failure 401
+// @Failure 500
+// @Router /auth/token [post]
+func (h *Handler) Token(w http.ResponseWriter, r *http.Request) {
+	var req tokenRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Email == "" || req.Password == "" {
+		http.Error(w, "email and password are required", http.StatusBadRequest)
+		return
+	}
+
+	user, created, err := h.service.PasswordLogin(r.Context(), req.Email, req.Password)
+	if err != nil {
+		if errors.Is(err, ErrInvalidCredentials) {
+			http.Error(w, "invalid email or password", http.StatusUnauthorized)
+			return
+		}
+		slog.ErrorContext(r.Context(), "password login failed", "err", err, "request_id", logger.RequestID(r.Context()))
+		http.Error(w, "authentication failed", http.StatusInternalServerError)
+		return
+	}
+
+	if err := h.issueSession(w, user); err != nil {
+		slog.ErrorContext(r.Context(), "issuing session failed", "err", err, "user_id", user.ID, "request_id", logger.RequestID(r.Context()))
+		http.Error(w, "authentication failed", http.StatusInternalServerError)
+		return
+	}
+
+	slog.InfoContext(r.Context(), "password login succeeded", "user_id", user.ID, "provisioned", created, "request_id", logger.RequestID(r.Context()))
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// issueSession signs a session token for user and sets the nv_session cookie.
+func (h *Handler) issueSession(w http.ResponseWriter, user *model.User) error {
+	token, err := h.signer.Issue(user.ID, user.Email)
+	if err != nil {
+		return err
+	}
 	http.SetCookie(w, &http.Cookie{
 		Name:     sessionCookie,
 		Value:    token,
@@ -127,9 +190,7 @@ func (h *Handler) Callback(w http.ResponseWriter, r *http.Request) {
 		Secure:   h.cookieSecure,
 		SameSite: http.SameSiteLaxMode,
 	})
-
-	slog.InfoContext(r.Context(), "login succeeded", "user_id", user.ID, "provisioned", created, "request_id", logger.RequestID(r.Context()))
-	http.Redirect(w, r, h.postLoginURL, http.StatusFound)
+	return nil
 }
 
 // Logout godoc

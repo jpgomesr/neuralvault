@@ -27,6 +27,7 @@ func TestRoutes(t *testing.T) {
 		wantStatus int
 	}{
 		{name: "login is public", method: http.MethodGet, path: "/login", wantStatus: http.StatusFound},
+		{name: "token is public", method: http.MethodPost, path: "/token", wantStatus: http.StatusBadRequest},
 		{name: "logout is public", method: http.MethodPost, path: "/logout", wantStatus: http.StatusNoContent},
 		{name: "me without session", method: http.MethodGet, path: "/me", wantStatus: http.StatusUnauthorized},
 		{name: "me with session", method: http.MethodGet, path: "/me", cookie: &http.Cookie{Name: sessionCookie, Value: validToken}, wantStatus: http.StatusOK},

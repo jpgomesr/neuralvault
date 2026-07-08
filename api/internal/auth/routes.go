@@ -11,6 +11,7 @@ func Routes(h *Handler) chi.Router {
 	r := chi.NewRouter()
 	r.Get("/login", h.Login)
 	r.Get("/callback", h.Callback)
+	r.Post("/token", h.Token)
 	r.Post("/logout", h.Logout)
 	r.With(h.RequireUser).Get("/me", h.Me)
 	return r

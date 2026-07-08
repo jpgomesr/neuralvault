@@ -22,6 +22,10 @@ type fakeService struct {
 	created     bool
 	exchangeErr error
 	gotCode     string
+
+	passwordLoginErr error
+	gotEmail         string
+	gotPassword      string
 }
 
 func (f *fakeService) AuthCodeURL(state string) string {
@@ -36,6 +40,15 @@ func (f *fakeService) Exchange(_ context.Context, code string) (*model.User, boo
 	f.gotCode = code
 	if f.exchangeErr != nil {
 		return nil, false, f.exchangeErr
+	}
+	return f.user, f.created, nil
+}
+
+func (f *fakeService) PasswordLogin(_ context.Context, email, password string) (*model.User, bool, error) {
+	f.gotEmail = email
+	f.gotPassword = password
+	if f.passwordLoginErr != nil {
+		return nil, false, f.passwordLoginErr
 	}
 	return f.user, f.created, nil
 }
@@ -143,6 +156,95 @@ func TestCallback_Rejects(t *testing.T) {
 			}
 			if cookieByName(rec, sessionCookie) != nil {
 				t.Error("no session cookie should be set on a rejected callback")
+			}
+		})
+	}
+}
+
+func TestToken_Success(t *testing.T) {
+	user := &model.User{ID: uuid.New(), Email: "u@example.com"}
+	svc := &fakeService{user: user, created: true}
+	h := NewHandler(svc, testSecret, false, "/app")
+
+	body := strings.NewReader(`{"email":"u@example.com","password":"secret"}`)
+	req := httptest.NewRequest(http.MethodPost, "/auth/token", body)
+	rec := httptest.NewRecorder()
+	h.Token(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status: got %d, want %d", rec.Code, http.StatusNoContent)
+	}
+	if svc.gotEmail != "u@example.com" || svc.gotPassword != "secret" {
+		t.Fatalf("password login called with email=%q password=%q", svc.gotEmail, svc.gotPassword)
+	}
+	session := cookieByName(rec, sessionCookie)
+	if session == nil || session.Value == "" {
+		t.Fatal("expected a session cookie to be set")
+	}
+	claims, err := h.signer.Verify(session.Value)
+	if err != nil {
+		t.Fatalf("session cookie failed to verify: %v", err)
+	}
+	if claims.UserID != user.ID {
+		t.Fatalf("session user: got %s, want %s", claims.UserID, user.ID)
+	}
+}
+
+func TestToken_InvalidCredentials(t *testing.T) {
+	svc := &fakeService{passwordLoginErr: ErrInvalidCredentials}
+	h := NewHandler(svc, testSecret, false, "/app")
+
+	body := strings.NewReader(`{"email":"u@example.com","password":"wrong"}`)
+	req := httptest.NewRequest(http.MethodPost, "/auth/token", body)
+	rec := httptest.NewRecorder()
+	h.Token(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status: got %d, want %d", rec.Code, http.StatusUnauthorized)
+	}
+	if cookieByName(rec, sessionCookie) != nil {
+		t.Error("no session cookie should be set on invalid credentials")
+	}
+}
+
+func TestToken_ProviderError(t *testing.T) {
+	svc := &fakeService{passwordLoginErr: errors.New("boom")}
+	h := NewHandler(svc, testSecret, false, "/app")
+
+	body := strings.NewReader(`{"email":"u@example.com","password":"secret"}`)
+	req := httptest.NewRequest(http.MethodPost, "/auth/token", body)
+	rec := httptest.NewRecorder()
+	h.Token(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status: got %d, want %d", rec.Code, http.StatusInternalServerError)
+	}
+	if cookieByName(rec, sessionCookie) != nil {
+		t.Error("no session cookie should be set on a provider error")
+	}
+}
+
+func TestToken_MissingFields(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+	}{
+		{name: "empty body", body: `{}`},
+		{name: "missing password", body: `{"email":"u@example.com"}`},
+		{name: "missing email", body: `{"password":"secret"}`},
+		{name: "malformed json", body: `not json`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := &fakeService{user: &model.User{ID: uuid.New()}}
+			h := NewHandler(svc, testSecret, false, "/app")
+
+			req := httptest.NewRequest(http.MethodPost, "/auth/token", strings.NewReader(tc.body))
+			rec := httptest.NewRecorder()
+			h.Token(rec, req)
+
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("status: got %d, want %d", rec.Code, http.StatusBadRequest)
 			}
 		})
 	}
