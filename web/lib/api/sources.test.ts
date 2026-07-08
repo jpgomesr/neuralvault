@@ -1,5 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { listSources, uploadSource, watchSourceStatus } from "./sources";
+import {
+  fetchSourceFileText,
+  listSourceFiles,
+  listSources,
+  sourceFileContentUrl,
+  uploadSource,
+  watchSourceStatus,
+} from "./sources";
 import { jsonResponse } from "./test-helpers";
 import type { SourceProgress } from "../types";
 
@@ -56,6 +63,46 @@ describe("uploadSource", () => {
   it("throws on an error status", async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse(null, { ok: false, status: 413 }));
     await expect(uploadSource("w1", "n", fileList())).rejects.toThrow("upload failed: 413");
+  });
+});
+
+describe("listSourceFiles", () => {
+  it("returns the files and URL-encodes the source id", async () => {
+    const files = [{ id: "f1", source_id: "s1", name: "a.md", size: 3, content_type: "text/markdown", created_at: "" }];
+    fetchMock.mockResolvedValueOnce(jsonResponse(files));
+    await expect(listSourceFiles("s 1")).resolves.toEqual(files);
+    expect(fetchMock).toHaveBeenCalledWith("/api/sources/s%201/files");
+  });
+
+  it("coerces a null body to an empty array", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(null));
+    await expect(listSourceFiles("s1")).resolves.toEqual([]);
+  });
+
+  it("throws on an error status", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(null, { ok: false, status: 403 }));
+    await expect(listSourceFiles("s1")).rejects.toThrow("list source files failed: 403");
+  });
+});
+
+describe("sourceFileContentUrl", () => {
+  it("builds a content URL with the id and path encoded", () => {
+    expect(sourceFileContentUrl("s 1", "docs/a b.md")).toBe(
+      "/api/sources/s%201/files/content?path=docs%2Fa%20b.md",
+    );
+  });
+});
+
+describe("fetchSourceFileText", () => {
+  it("returns the file body text", async () => {
+    fetchMock.mockResolvedValueOnce({ ok: true, text: async () => "# Hi" } as Response);
+    await expect(fetchSourceFileText("s1", "a.md")).resolves.toBe("# Hi");
+    expect(fetchMock).toHaveBeenCalledWith("/api/sources/s1/files/content?path=a.md");
+  });
+
+  it("throws on an error status", async () => {
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 404 } as Response);
+    await expect(fetchSourceFileText("s1", "a.md")).rejects.toThrow("fetch file failed: 404");
   });
 });
 
