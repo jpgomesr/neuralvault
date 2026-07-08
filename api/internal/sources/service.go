@@ -506,7 +506,10 @@ func (s *SourceService) updateEmbeddingModel(ctx context.Context, chunks []model
 // rejects absolute paths and any parent-directory traversal, so a malicious
 // filename can never escape the source's prefix or the temp directory.
 func cleanRelPath(name string) (string, error) {
-	rel := strings.TrimPrefix(filepath.ToSlash(name), "/")
+	// Normalize backslashes to forward slashes explicitly: filepath.ToSlash is a
+	// no-op on Linux, so relying on it would leave Windows-style separators (and
+	// their traversal risk) intact on the server. Object keys always use "/".
+	rel := strings.TrimPrefix(strings.ReplaceAll(name, "\\", "/"), "/")
 	if rel == "" {
 		return "", fmt.Errorf("empty file path")
 	}
