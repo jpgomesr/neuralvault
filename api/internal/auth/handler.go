@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/google/uuid"
+
 	"github.com/jpgomesr/NeuralVault/internal/logger"
 	"github.com/jpgomesr/NeuralVault/internal/model"
 )
@@ -22,11 +24,18 @@ const (
 	stateTTL = 10 * time.Minute
 )
 
+// tokenSigner issues and verifies session cookies. *sessionSigner is the
+// production implementation; tests inject fakes to exercise failure paths.
+type tokenSigner interface {
+	Issue(userID uuid.UUID, email string) (string, error)
+	Verify(token string) (Claims, error)
+}
+
 // Handler holds HTTP handler methods and the RequireUser middleware for the
 // auth domain.
 type Handler struct {
 	service      Service
-	signer       *sessionSigner
+	signer       tokenSigner
 	cookieSecure bool
 	postLoginURL string
 }

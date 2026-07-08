@@ -55,6 +55,17 @@ func (f *fakeService) PasswordLogin(_ context.Context, email, password string) (
 
 func (f *fakeService) HealthCheck(_ context.Context) error { return nil }
 
+// failingSigner satisfies tokenSigner but always fails to issue a token, so a
+// test can exercise the issueSession error path (unreachable with the real
+// signer, whose only error source — json.Marshal of Claims — cannot fail).
+type failingSigner struct{}
+
+func (failingSigner) Issue(uuid.UUID, string) (string, error) {
+	return "", errors.New("issue failed")
+}
+
+func (failingSigner) Verify(string) (Claims, error) { return Claims{}, nil }
+
 // cookieByName returns the last Set-Cookie with the given name, or nil.
 func cookieByName(rec *httptest.ResponseRecorder, name string) *http.Cookie {
 	var found *http.Cookie
@@ -247,6 +258,42 @@ func TestToken_MissingFields(t *testing.T) {
 				t.Fatalf("status: got %d, want %d", rec.Code, http.StatusBadRequest)
 			}
 		})
+	}
+}
+
+func TestToken_IssueSessionError(t *testing.T) {
+	svc := &fakeService{user: &model.User{ID: uuid.New(), Email: "u@example.com"}}
+	h := NewHandler(svc, testSecret, false, "/app")
+	h.signer = failingSigner{}
+
+	body := strings.NewReader(`{"email":"u@example.com","password":"secret"}`)
+	req := httptest.NewRequest(http.MethodPost, "/auth/token", body)
+	rec := httptest.NewRecorder()
+	h.Token(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status: got %d, want %d", rec.Code, http.StatusInternalServerError)
+	}
+	if cookieByName(rec, sessionCookie) != nil {
+		t.Error("no session cookie should be set when issuing the session fails")
+	}
+}
+
+func TestCallback_IssueSessionError(t *testing.T) {
+	svc := &fakeService{user: &model.User{ID: uuid.New(), Email: "u@example.com"}}
+	h := NewHandler(svc, testSecret, false, "/app")
+	h.signer = failingSigner{}
+
+	req := httptest.NewRequest(http.MethodGet, "/auth/callback?state=abc&code=xyz", nil)
+	req.AddCookie(&http.Cookie{Name: stateCookie, Value: "abc"})
+	rec := httptest.NewRecorder()
+	h.Callback(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("status: got %d, want %d", rec.Code, http.StatusInternalServerError)
+	}
+	if cookieByName(rec, sessionCookie) != nil {
+		t.Error("no session cookie should be set when issuing the session fails")
 	}
 }
 

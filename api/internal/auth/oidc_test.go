@@ -38,6 +38,7 @@ type stubIDP struct {
 	omitIDToken     bool // token response carries no id_token
 	tokenFailure    bool // token endpoint returns 400 (code exchange)
 	passwordDenied  bool // token endpoint returns 400 invalid_grant (password grant)
+	passwordFailure bool // token endpoint returns 500 (password grant, non-invalid_grant)
 	gotGrantType    string
 	gotUsername     string
 	gotPassword     string
@@ -82,6 +83,10 @@ func newStubIDP(t *testing.T, clientID string) *stubIDP {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
 			_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid_grant"})
+			return
+		}
+		if idp.gotGrantType == "password" && idp.passwordFailure {
+			http.Error(w, "server error", http.StatusInternalServerError)
 			return
 		}
 		if idp.tokenFailure {
@@ -306,6 +311,20 @@ func TestPasswordLogin_InvalidCredentials(t *testing.T) {
 	_, _, err := svc.PasswordLogin(context.Background(), "dev@neuralvault.local", "wrong")
 	if !errors.Is(err, ErrInvalidCredentials) {
 		t.Fatalf("PasswordLogin: got %v, want ErrInvalidCredentials", err)
+	}
+}
+
+func TestPasswordLogin_ProviderError(t *testing.T) {
+	idp := newStubIDP(t, "test-client")
+	idp.passwordFailure = true
+	svc := serviceFromIDP(t, idp)
+
+	_, _, err := svc.PasswordLogin(context.Background(), "dev@neuralvault.local", "dev")
+	if err == nil || errors.Is(err, ErrInvalidCredentials) {
+		t.Fatalf("PasswordLogin: got %v, want a non-credential provider error", err)
+	}
+	if !strings.Contains(err.Error(), "password grant") {
+		t.Fatalf("PasswordLogin: got %v, want a wrapped password grant error", err)
 	}
 }
 
