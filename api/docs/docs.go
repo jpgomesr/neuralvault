@@ -355,6 +355,89 @@ const docTemplate = `{
                 }
             }
         },
+        "/sources/{id}/files": {
+            "get": {
+                "description": "Returns the original files stored for a source, with size and content type.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "sources"
+                ],
+                "summary": "List files of a source",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Source UUID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK"
+                    },
+                    "400": {
+                        "description": "Bad Request"
+                    },
+                    "401": {
+                        "description": "Unauthorized"
+                    },
+                    "403": {
+                        "description": "Forbidden"
+                    },
+                    "500": {
+                        "description": "Internal Server Error"
+                    }
+                }
+            }
+        },
+        "/sources/{id}/files/content": {
+            "get": {
+                "description": "Streams the raw content of a single file (by its path relative to the source root) for inline preview or download.",
+                "tags": [
+                    "sources"
+                ],
+                "summary": "Stream a source file's content",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Source UUID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "File path relative to the source root",
+                        "name": "path",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK"
+                    },
+                    "400": {
+                        "description": "Bad Request"
+                    },
+                    "401": {
+                        "description": "Unauthorized"
+                    },
+                    "403": {
+                        "description": "Forbidden"
+                    },
+                    "404": {
+                        "description": "Not Found"
+                    },
+                    "500": {
+                        "description": "Internal Server Error"
+                    }
+                }
+            }
+        },
         "/sources/{id}/ingest": {
             "post": {
                 "description": "Re-downloads the source's files from object storage and re-indexes them in the background.",

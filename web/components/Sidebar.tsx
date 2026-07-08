@@ -2,8 +2,10 @@
 
 import { useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
+import { Files } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import SourceFilesDialog from "@/components/SourceFilesDialog";
 import { watchSourceStatus } from "@/lib/api/sources";
 import { sourcesQueryKey, useSources, useUploadSourceMutation } from "@/hooks/use-sources";
 
@@ -18,6 +20,7 @@ export default function Sidebar({ workspaceId }: { workspaceId: string }) {
   const [name, setName] = useState("");
   const [files, setFiles] = useState<FileList | null>(null);
   const [liveStatus, setLiveStatus] = useState<Record<string, string>>({});
+  const [preview, setPreview] = useState<{ id: string; name: string } | null>(null);
 
   async function onUpload(e: React.FormEvent) {
     e.preventDefault();
@@ -75,10 +78,31 @@ export default function Sidebar({ workspaceId }: { workspaceId: string }) {
         return (
           <div className="source" key={s.ID}>
             <span>{s.Name}</span>
-            <span className={`badge ${status}`}>{status}</span>
+            <span className="flex items-center gap-1.5">
+              <span className={`badge ${status}`}>{status}</span>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-xs"
+                title="View files"
+                aria-label={`View files of ${s.Name}`}
+                onClick={() => setPreview({ id: s.ID, name: s.Name })}
+              >
+                <Files />
+              </Button>
+            </span>
           </div>
         );
       })}
+
+      {preview && (
+        <SourceFilesDialog
+          sourceId={preview.id}
+          sourceName={preview.name}
+          open={preview !== null}
+          onOpenChange={(o) => !o && setPreview(null)}
+        />
+      )}
     </aside>
   );
 }

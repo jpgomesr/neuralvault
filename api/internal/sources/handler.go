@@ -3,6 +3,7 @@ package sources
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"path/filepath"
@@ -95,9 +96,14 @@ func (h *Handler) CreateSource(w http.ResponseWriter, r *http.Request) {
 		}
 		defer f.Close() //nolint:errcheck
 		uploads = append(uploads, FileUpload{
-			Name:    filepath.Base(fh.Filename),
-			Content: f,
-			Size:    fh.Size,
+			// fh.Filename carries the file's path relative to the uploaded root
+			// (the browser sets it as the multipart part filename); the service
+			// sanitizes it before use. Do not collapse it with filepath.Base —
+			// that would discard nested directory structure.
+			Name:        fh.Filename,
+			Content:     f,
+			Size:        fh.Size,
+			ContentType: fh.Header.Get("Content-Type"),
 		})
 	}
 
@@ -221,6 +227,109 @@ func (h *Handler) ListChunks(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(chunks) //nolint:errcheck
+}
+
+// ListFiles godoc
+//
+// @Summary List files of a source
+// @Description Returns the original files stored for a source, with size and content type.
+// @Tags sources
+// @Produce json
+// @Param id path string true "Source UUID"
+// @Success 200
+// @Failure 400
+// @Failure 401
+// @Failure 403
+// @Failure 500
+// @Router /sources/{id}/files [get]
+func (h *Handler) ListFiles(w http.ResponseWriter, r *http.Request) {
+	sourceID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		slog.WarnContext(r.Context(), "invalid list files request", "err", "invalid source id", "request_id", logger.RequestID(r.Context()))
+		http.Error(w, "invalid source id: must be a UUID", http.StatusBadRequest)
+		return
+	}
+
+	source, err := h.service.GetByID(r.Context(), sourceID)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "list files failed", "err", err, "source_id", sourceID, "request_id", logger.RequestID(r.Context()))
+		http.Error(w, "failed to load source: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if !workspaces.EnsureMember(w, r, h.members, source.WorkspaceID) {
+		return
+	}
+
+	files, err := h.service.ListFiles(r.Context(), sourceID)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "list files failed", "err", err, "source_id", sourceID, "request_id", logger.RequestID(r.Context()))
+		http.Error(w, "failed to list files: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if files == nil {
+		files = []model.SourceFile{}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(files) //nolint:errcheck
+}
+
+// GetFileContent godoc
+//
+// @Summary Stream a source file's content
+// @Description Streams the raw content of a single file (by its path relative to the source root) for inline preview or download.
+// @Tags sources
+// @Param id path string true "Source UUID"
+// @Param path query string true "File path relative to the source root"
+// @Success 200
+// @Failure 400
+// @Failure 401
+// @Failure 403
+// @Failure 404
+// @Failure 500
+// @Router /sources/{id}/files/content [get]
+func (h *Handler) GetFileContent(w http.ResponseWriter, r *http.Request) {
+	sourceID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		slog.WarnContext(r.Context(), "invalid file content request", "err", "invalid source id", "request_id", logger.RequestID(r.Context()))
+		http.Error(w, "invalid source id: must be a UUID", http.StatusBadRequest)
+		return
+	}
+
+	relPath := r.URL.Query().Get("path")
+	if relPath == "" {
+		http.Error(w, "path query parameter is required", http.StatusBadRequest)
+		return
+	}
+
+	source, err := h.service.GetByID(r.Context(), sourceID)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "file content failed", "err", err, "source_id", sourceID, "request_id", logger.RequestID(r.Context()))
+		http.Error(w, "failed to load source: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if !workspaces.EnsureMember(w, r, h.members, source.WorkspaceID) {
+		return
+	}
+
+	rc, contentType, err := h.service.OpenFile(r.Context(), sourceID, relPath)
+	if err != nil {
+		slog.WarnContext(r.Context(), "file content not found", "err", err, "source_id", sourceID, "path", relPath, "request_id", logger.RequestID(r.Context()))
+		http.Error(w, "file not found", http.StatusNotFound)
+		return
+	}
+	defer rc.Close() //nolint:errcheck
+
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Content-Disposition", fmt.Sprintf("inline; filename=%q", filepath.Base(relPath)))
+	if _, err := io.Copy(w, rc); err != nil {
+		slog.ErrorContext(r.Context(), "streaming file content failed", "err", err, "source_id", sourceID, "path", relPath, "request_id", logger.RequestID(r.Context()))
+	}
 }
 
 // StreamStatus godoc

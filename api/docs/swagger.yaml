@@ -258,6 +258,63 @@ paths:
       summary: List chunks of a source
       tags:
       - sources
+  /sources/{id}/files:
+    get:
+      description: Returns the original files stored for a source, with size and content
+        type.
+      parameters:
+      - description: Source UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+        "400":
+          description: Bad Request
+        "401":
+          description: Unauthorized
+        "403":
+          description: Forbidden
+        "500":
+          description: Internal Server Error
+      summary: List files of a source
+      tags:
+      - sources
+  /sources/{id}/files/content:
+    get:
+      description: Streams the raw content of a single file (by its path relative
+        to the source root) for inline preview or download.
+      parameters:
+      - description: Source UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: File path relative to the source root
+        in: query
+        name: path
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+        "400":
+          description: Bad Request
+        "401":
+          description: Unauthorized
+        "403":
+          description: Forbidden
+        "404":
+          description: Not Found
+        "500":
+          description: Internal Server Error
+      summary: Stream a source file's content
+      tags:
+      - sources
   /sources/{id}/ingest:
     post:
       description: Re-downloads the source's files from object storage and re-indexes

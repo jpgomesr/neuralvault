@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -364,6 +365,63 @@ func TestServiceCreate(t *testing.T) {
 	}
 
 	awaitIndexed(ctx, t, svc, src.ID)
+}
+
+func TestServiceFiles_RoundTrip(t *testing.T) {
+	ctx := context.Background()
+	svc := newSvc(ctx, t)
+	wid := insertWS(ctx, t)
+
+	const rootContent = "# Root doc"
+	const nestedContent = "nested plain text"
+	src, err := svc.Create(ctx, CreateRequest{WorkspaceID: wid, Name: "vault"}, []FileUpload{
+		{Name: "readme.md", Content: bytes.NewBufferString(rootContent), Size: int64(len(rootContent)), ContentType: "text/markdown"},
+		{Name: "docs/guide/intro.txt", Content: bytes.NewBufferString(nestedContent), Size: int64(len(nestedContent))},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	awaitIndexed(ctx, t, svc, src.ID)
+
+	files, err := svc.ListFiles(ctx, src.ID)
+	if err != nil {
+		t.Fatalf("ListFiles: %v", err)
+	}
+	if len(files) != 2 {
+		t.Fatalf("expected 2 files, got %d: %+v", len(files), files)
+	}
+	// Ordered by name: "docs/guide/intro.txt" before "readme.md".
+	if files[0].Name != "docs/guide/intro.txt" {
+		t.Errorf("expected nested path preserved, got %q", files[0].Name)
+	}
+	if files[0].Size != int64(len(nestedContent)) {
+		t.Errorf("nested file size mismatch: want %d, got %d", len(nestedContent), files[0].Size)
+	}
+	if files[1].Name != "readme.md" || files[1].ContentType != "text/markdown" {
+		t.Errorf("unexpected root file metadata: %+v", files[1])
+	}
+
+	// OpenFile streams the nested file's original bytes.
+	rc, ct, err := svc.OpenFile(ctx, src.ID, "docs/guide/intro.txt")
+	if err != nil {
+		t.Fatalf("OpenFile: %v", err)
+	}
+	defer rc.Close() //nolint:errcheck
+	got, err := io.ReadAll(rc)
+	if err != nil {
+		t.Fatalf("read content: %v", err)
+	}
+	if string(got) != nestedContent {
+		t.Errorf("content mismatch: want %q, got %q", nestedContent, string(got))
+	}
+	if ct == "" {
+		t.Error("expected a content type from OpenFile")
+	}
+
+	// Path traversal is rejected.
+	if _, _, err := svc.OpenFile(ctx, src.ID, "../escape"); err == nil {
+		t.Error("expected OpenFile to reject traversal path")
+	}
 }
 
 func TestServiceCreate_BadWorkspace(t *testing.T) {
