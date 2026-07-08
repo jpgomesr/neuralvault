@@ -1,6 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { listSources, uploadSource, watchSourceStatus } from "@/lib/api";
 import type { Source } from "@/lib/types";
 
@@ -61,7 +63,7 @@ export default function Sidebar({ workspaceId }: { workspaceId: string }) {
     <aside className="sidebar">
       <h2>Add a source</h2>
       <form className="uploader" onSubmit={onUpload}>
-        <input
+        <Input
           type="text"
           placeholder="Source name"
           value={name}
@@ -73,9 +75,9 @@ export default function Sidebar({ workspaceId }: { workspaceId: string }) {
           onChange={(e) => setFiles(e.target.files)}
           key={busy ? "busy" : "idle"}
         />
-        <button className="btn" type="submit" disabled={busy || !name || !files?.length}>
+        <Button type="submit" disabled={busy || !name || !files?.length}>
           {busy ? "Uploading…" : "Upload & index"}
-        </button>
+        </Button>
         {error && <div className="error">{error}</div>}
       </form>
 

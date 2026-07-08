@@ -1,13 +1,42 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
+
 :root {
+  /* Existing dark-theme palette (unchanged values) — the single source of
+     truth for both the hand-rolled classes below and the shadcn tokens. */
   --bg: #0f1115;
   --panel: #171a21;
   --panel-2: #1e222b;
   --border: #2a2f3a;
   --text: #e6e9ef;
-  --muted: #9aa3b2;
-  --accent: #6ea8fe;
+  --muted-text: #9aa3b2;
+  --brand: #6ea8fe;
   --accent-fg: #0b1220;
   --danger: #f87171;
+
+  /* shadcn semantic tokens, mapped onto the palette above so components use
+     the same dark theme without redefining colors. */
+  --background: var(--bg);
+  --foreground: var(--text);
+  --card: var(--panel);
+  --card-foreground: var(--text);
+  --popover: var(--panel);
+  --popover-foreground: var(--text);
+  --primary: var(--brand);
+  --primary-foreground: var(--accent-fg);
+  --secondary: var(--panel-2);
+  --secondary-foreground: var(--text);
+  --muted: var(--panel-2);
+  --muted-foreground: var(--muted-text);
+  --accent: var(--panel-2);
+  --accent-foreground: var(--text);
+  --destructive: var(--danger);
+  --input: var(--border);
+  --ring: var(--brand);
+  --radius: 0.625rem;
 }
 
 * {
@@ -32,7 +61,7 @@ body {
 }
 
 a {
-  color: var(--accent);
+  color: var(--brand);
 }
 
 .btn {
@@ -40,7 +69,7 @@ a {
   align-items: center;
   justify-content: center;
   gap: 0.4rem;
-  background: var(--accent);
+  background: var(--brand);
   color: var(--accent-fg);
   border: none;
   border-radius: 8px;
@@ -101,7 +130,7 @@ a {
 }
 
 .topbar .email {
-  color: var(--muted);
+  color: var(--muted-text);
   font-size: 0.85rem;
 }
 
@@ -131,7 +160,7 @@ input[type="text"] {
   font-size: 0.8rem;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  color: var(--muted);
+  color: var(--muted-text);
   margin: 1rem 0 0.5rem;
 }
 
@@ -151,7 +180,7 @@ input[type="text"] {
   padding: 0.1rem 0.45rem;
   border-radius: 999px;
   border: 1px solid var(--border);
-  color: var(--muted);
+  color: var(--muted-text);
 }
 
 .badge.indexed {
@@ -160,8 +189,8 @@ input[type="text"] {
 }
 
 .badge.indexing {
-  color: var(--accent);
-  border-color: var(--accent);
+  color: var(--brand);
+  border-color: var(--brand);
 }
 
 .badge.error {
@@ -191,7 +220,7 @@ input[type="text"] {
   font-size: 0.72rem;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  color: var(--muted);
+  color: var(--muted-text);
   margin-bottom: 0.25rem;
 }
 
@@ -217,7 +246,7 @@ input[type="text"] {
 
 .chip {
   font-size: 0.75rem;
-  color: var(--muted);
+  color: var(--muted-text);
   background: var(--panel-2);
   border: 1px solid var(--border);
   border-radius: 999px;
@@ -252,11 +281,51 @@ input[type="text"] {
 }
 
 .hint {
-  color: var(--muted);
+  color: var(--muted-text);
   font-size: 0.8rem;
 }
 
 .error {
   color: var(--danger);
   font-size: 0.85rem;
+}
+
+@theme inline {
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --color-foreground: var(--foreground);
+  --color-background: var(--background);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+  html {
+    @apply font-sans;
+  }
 }
