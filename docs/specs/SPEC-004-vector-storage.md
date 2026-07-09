@@ -10,10 +10,10 @@ Chunk embeddings need a store that supports fast approximate nearest-neighbour s
 - A single `Client` interface wrapping all vector-database operations, so business logic never imports the Qdrant SDK's connection handling directly.
 - Collection lifecycle managed at startup — the API never assumes the collection exists.
 - Every stored point carries the IDs needed for workspace-scoped filtering.
+- `Client` method signatures speak package-level domain types rather than `qdrant/go-client` protobuf types ([ADR-008](../adr/ADR-008-storage-vectorstorage-interface-abstraction.md)), so consumers never import the Qdrant SDK.
 
 ##### Non-goals
 - Query-side retrieval logic — ranking, filters, hybrid search live in the retrieval engine ([SPEC-006](SPEC-006-retrieval-engine.md)); this layer only exposes the raw `Query` primitive.
-- Hiding Qdrant protobuf types: method signatures deliberately use `qdrant/go-client` types (see the note in `vectorstorage.go`) — swapping the backend means swapping the implementation behind `NewClient`, provided the types remain compatible.
 
 ##### Proposed design
 `api/internal/vectorstorage/` follows the interface-at-root, provider-in-subpackage pattern:
@@ -40,4 +40,5 @@ Chunk embeddings need a store that supports fast approximate nearest-neighbour s
 
 ##### Related (Optional)
 - [ADR-003](../adr/ADR-003-core-vector-database-decision.md) — why Qdrant
+- [ADR-008](../adr/ADR-008-storage-vectorstorage-interface-abstraction.md) — `Client` speaks domain types instead of Qdrant protobuf (supersedes the former "Hiding Qdrant protobuf types" Non-goal)
 - [SPEC-001](SPEC-001-source-ingestion-pipeline.md), [SPEC-003](SPEC-003-embedding-generation.md), [SPEC-006](SPEC-006-retrieval-engine.md)

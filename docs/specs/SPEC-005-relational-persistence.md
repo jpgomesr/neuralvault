@@ -7,7 +7,7 @@ Implemented
 NeuralVault needs durable, transactional storage for everything that is not a vector: users, workspaces, sources, chunk text and metadata, and pipeline state. [ADR-002](../adr/ADR-002-core-database-decision.md) selected PostgreSQL; this spec describes the access layer and the domain model built on it.
 
 ##### Goals
-- A thin `Pool` interface over `pgxpool` so services depend on an abstraction they can fake in tests.
+- A thin `Pool` interface over `pgxpool` so services depend on an abstraction they can fake in tests. `Pool`'s own signatures declare locally-owned `Rows`/`Row`/`Tx`/`CommandTag` interface types rather than naming `pgx`/`pgconn` directly ([ADR-008](../adr/ADR-008-storage-vectorstorage-interface-abstraction.md)); services still scan rows themselves — this is not an ORM.
 - A multi-tenant data model: every source and chunk is scoped to a workspace from day one.
 - Schema changes tracked as numbered SQL migrations, applied by a dedicated binary.
 
@@ -39,4 +39,5 @@ NeuralVault needs durable, transactional storage for everything that is not a ve
 
 ##### Related (Optional)
 - [ADR-002](../adr/ADR-002-core-database-decision.md) — why PostgreSQL
+- [ADR-008](../adr/ADR-008-storage-vectorstorage-interface-abstraction.md) — `Pool` declares local `Rows`/`Row`/`Tx`/`CommandTag` types instead of leaking `pgx`/`pgconn`
 - [SPEC-001](SPEC-001-source-ingestion-pipeline.md), [SPEC-002](SPEC-002-chunking.md), [SPEC-009](SPEC-009-platform-cross-cutting.md)
