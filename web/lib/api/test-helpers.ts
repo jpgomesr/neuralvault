@@ -7,6 +7,8 @@ export function jsonResponse(body: unknown, init?: { ok?: boolean; status?: numb
     ok: init?.ok ?? (status >= 200 && status < 300),
     status,
     json: async () => body,
+    text: async () =>
+      body == null ? "" : typeof body === "string" ? body : JSON.stringify(body),
   } as Response;
 }
 
