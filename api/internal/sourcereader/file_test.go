@@ -183,6 +183,46 @@ func TestFileReader_Read(t *testing.T) {
 				return makeSource(t, path)
 			},
 			wantLen: 1,
+			check: func(t *testing.T, _ model.Source, reqs []chunking.ChunkRequest) {
+				if reqs[0].FilePath != "single.md" {
+					t.Errorf("FilePath = %q, want %q", reqs[0].FilePath, "single.md")
+				}
+			},
+		},
+		{
+			name: "file paths are relative to root, not absolute temp paths",
+			setup: func(t *testing.T) model.Source {
+				dir := t.TempDir()
+				sub := filepath.Join(dir, "sub")
+				if err := os.MkdirAll(sub, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				writeFile(t, dir, "root.md", "root")
+				writeFile(t, sub, "child.md", "child")
+				return makeSource(t, dir)
+			},
+			wantLen: 2,
+			check: func(t *testing.T, source model.Source, reqs []chunking.ChunkRequest) {
+				var meta model.FileSourceMetadata
+				if err := json.Unmarshal(source.Metadata, &meta); err != nil {
+					t.Fatalf("unmarshal metadata: %v", err)
+				}
+				got := make(map[string]bool, len(reqs))
+				for _, req := range reqs {
+					got[req.FilePath] = true
+					if filepath.IsAbs(req.FilePath) {
+						t.Errorf("FilePath %q is absolute, want relative", req.FilePath)
+					}
+					if strings.HasPrefix(req.FilePath, filepath.ToSlash(meta.RootPath)) {
+						t.Errorf("FilePath %q leaks the temp-dir root prefix", req.FilePath)
+					}
+				}
+				for _, want := range []string{"root.md", "sub/child.md"} {
+					if !got[want] {
+						t.Errorf("missing relative FilePath %q; got %v", want, got)
+					}
+				}
+			},
 		},
 	}
 
