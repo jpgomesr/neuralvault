@@ -200,6 +200,8 @@ func (c *Client) Complete(ctx context.Context, req types.CompletionRequest) (typ
 	return types.CompletionResponse{
 		Content: out.Message.Content,
 		Model:   out.Model,
+		// CacheReadTokens/CacheCreationTokens are left zero: Ollama's API has no
+		// cache concept.
 		Usage: types.Usage{
 			PromptTokens:     out.PromptEvalCount,
 			CompletionTokens: out.EvalCount,

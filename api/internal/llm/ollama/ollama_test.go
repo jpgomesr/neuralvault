@@ -74,7 +74,8 @@ func TestComplete_Success(t *testing.T) {
 	if resp.Model != "llama3" {
 		t.Fatalf("expected model %q, got %q", "llama3", resp.Model)
 	}
-	if resp.Usage.PromptTokens != 5 || resp.Usage.CompletionTokens != 3 || resp.Usage.TotalTokens != 8 {
+	if resp.Usage.PromptTokens != 5 || resp.Usage.CompletionTokens != 3 || resp.Usage.TotalTokens != 8 ||
+		resp.Usage.CacheReadTokens != 0 || resp.Usage.CacheCreationTokens != 0 {
 		t.Fatalf("unexpected usage: %+v", resp.Usage)
 	}
 }

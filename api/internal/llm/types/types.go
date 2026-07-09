@@ -38,6 +38,17 @@ type Usage struct {
 	PromptTokens     int
 	CompletionTokens int
 	TotalTokens      int
+
+	// CacheReadTokens counts prompt tokens served from a provider-side cache
+	// hit, typically billed at a reduced rate. Zero for providers with no
+	// cache support (e.g. Ollama) or any request without a cache hit.
+	CacheReadTokens int
+
+	// CacheCreationTokens counts prompt tokens written to a provider-side
+	// cache for reuse by a later request, typically billed at a premium over
+	// a normal input token. Zero for providers with no cache support or any
+	// request that did not create a cache entry.
+	CacheCreationTokens int
 }
 
 // StreamChunk is one incremental piece of a streamed completion.

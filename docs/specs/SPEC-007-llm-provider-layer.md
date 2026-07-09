@@ -20,7 +20,7 @@ After retrieval assembles context, NeuralVault must send it to a language model 
 `api/internal/llm/` already defines the shape (mirroring `embedding/` and `vectorstorage/`):
 
 - `Provider` interface: `Complete(ctx, CompletionRequest) (CompletionResponse, error)` and `Stream(ctx, CompletionRequest) (<-chan StreamChunk, error)`; the channel closes after the `Done` chunk or an unrecoverable error, and cancelling `ctx` stops generation. Implementations must be safe for concurrent use.
-- Domain types: `Message` with `system|user|assistant` roles, `CompletionRequest` (messages, model, max tokens, temperature), `Usage` token accounting.
+- Domain types: `Message` with `system|user|assistant` roles, `CompletionRequest` (messages, model, max tokens, temperature), `Usage` token accounting including cache read/creation counters ([ADR-007](../adr/ADR-007-defer-prompt-caching-boundary.md)) — caching intent itself is not modeled on `CompletionRequest` and is left to each adapter per that decision.
 - Planned provider subpackages per `CONTRIBUTING.md`: `llm/ollama/`, `llm/openai/`, `llm/claude/`, `llm/gemini/` — each an HTTP/SDK adapter translating the domain types, with a factory (`llm.NewProvider`) mirroring `embedding.NewEmbedder` for selection by config.
 - A chat domain (handler/service/routes, likely `api/internal/chat/`) composes retrieval → context → `Provider.Stream` and relays chunks over SSE.
 
@@ -33,7 +33,8 @@ After retrieval assembles context, NeuralVault must send it to a language model 
 ##### Open questions
 - Where do BYOK keys live — encrypted in Postgres per workspace, or env-only until multi-user auth ([SPEC-009](SPEC-009-platform-cross-cutting.md)) lands?
 - Is provider selection per request, per workspace default, or both?
-- How is `Usage` persisted for cost visibility, and does it feed the Phase 2 dashboard?
+- `Usage` now carries cache accounting fields (`CacheReadTokens`, `CacheCreationTokens`) per [ADR-007](../adr/ADR-007-defer-prompt-caching-boundary.md); how it's persisted for cost visibility, and whether it feeds the Phase 2 dashboard, remains open.
+- Prompt caching intent (Anthropic `cache_control` breakpoints, Gemini context caching) is deliberately not modeled on `CompletionRequest` yet — see [ADR-007](../adr/ADR-007-defer-prompt-caching-boundary.md); revisit when the first caching-capable adapter (Claude or Gemini) is implemented.
 - Do Qwen/DeepSeek go through OpenAI-compatible endpoints (one generic adapter) or dedicated subpackages?
 
 ##### Acceptance criteria
