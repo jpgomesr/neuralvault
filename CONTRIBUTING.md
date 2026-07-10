@@ -220,8 +220,10 @@ Branch off `main` using this naming convention:
 # Backend tests
 cd api && go test ./...          # or: go test ./... -race (matches CI)
 
-# Frontend type checking (no unit-test suite yet)
+# Frontend type checking and tests
 cd web && npm run type-check
+cd web && npm run test           # vitest run
+cd web && npm run test:coverage  # vitest run --coverage (matches CI's test-coverage-web.yml)
 ```
 
 ### Linting
