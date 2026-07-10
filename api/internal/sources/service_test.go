@@ -165,6 +165,29 @@ func (p sourceFilesQueryFailingPool) Query(ctx context.Context, sql string, args
 	return p.Pool.Query(ctx, sql, args...)
 }
 
+// claimFailingPool fails the compare-and-swap Exec used by claimForIndexing
+// (identified by its "status <> $1" predicate), so the claim-error path can be
+// exercised. Other statements, including getByID's QueryRow, delegate normally.
+type claimFailingPool struct{ storage.Pool }
+
+func (p claimFailingPool) Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
+	if strings.Contains(sql, "status <> $1") {
+		return pgconn.CommandTag{}, fmt.Errorf("injected claim failure")
+	}
+	return p.Pool.Exec(ctx, sql, args...)
+}
+
+// resetFailingPool fails the reset Exec used by ResetStuckIndexing (identified by
+// its "WHERE status = $2" predicate), so its error path can be exercised.
+type resetFailingPool struct{ storage.Pool }
+
+func (p resetFailingPool) Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
+	if strings.Contains(sql, "WHERE status = $2") {
+		return pgconn.CommandTag{}, fmt.Errorf("injected reset failure")
+	}
+	return p.Pool.Exec(ctx, sql, args...)
+}
+
 // errReader always fails on Read, used to exercise copy-error branches.
 type errReader struct{}
 
@@ -986,6 +1009,29 @@ func TestResetStuckIndexing(t *testing.T) {
 	}
 	if got.Status != model.SourceStatusError {
 		t.Fatalf("status after reset = %q, want %q", got.Status, model.SourceStatusError)
+	}
+}
+
+// TestServiceIngest_ClaimError verifies that a failure of the claim compare-and-swap
+// surfaces from Ingest instead of spawning a re-ingest goroutine.
+func TestServiceIngest_ClaimError(t *testing.T) {
+	ctx := context.Background()
+	wid := insertWS(ctx, t)
+	src := insertSrcRow(ctx, t, wid, t.TempDir())
+	svc := buildCustomSvc(ctx, t, claimFailingPool{Pool: sharedPool}, &stubEmbedder{dim: 768}, stubVectorStore{})
+
+	err := svc.Ingest(ctx, src.ID)
+	if err == nil || !strings.Contains(err.Error(), "claim source for indexing") {
+		t.Fatalf("Ingest = %v, want claim source for indexing error", err)
+	}
+}
+
+// TestResetStuckIndexing_Error verifies the reset query's error is wrapped and returned.
+func TestResetStuckIndexing_Error(t *testing.T) {
+	ctx := context.Background()
+	if _, err := ResetStuckIndexing(ctx, resetFailingPool{Pool: sharedPool}); err == nil ||
+		!strings.Contains(err.Error(), "reset stuck indexing sources") {
+		t.Fatalf("ResetStuckIndexing = %v, want reset stuck indexing sources error", err)
 	}
 }
 
