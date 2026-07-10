@@ -17,6 +17,7 @@ import (
 	"github.com/jpgomesr/NeuralVault/internal/logger"
 	"github.com/jpgomesr/NeuralVault/internal/objectstorage"
 	"github.com/jpgomesr/NeuralVault/internal/router"
+	"github.com/jpgomesr/NeuralVault/internal/sources"
 	"github.com/jpgomesr/NeuralVault/internal/storage"
 	"github.com/jpgomesr/NeuralVault/internal/vectorstorage"
 )
@@ -42,6 +43,16 @@ func main() {
 		os.Exit(1)
 	}
 	defer pgPool.Close()
+
+	// Any source still in indexing status is a leftover from a crashed or
+	// restarted process, since indexing only runs in-process. Reset them to error
+	// before serving so SSE clients get a terminal event instead of waiting out
+	// the stream timeout. Best-effort: a failure here must not block startup.
+	if n, err := sources.ResetStuckIndexing(ctx, pgPool); err != nil {
+		slog.Error("failed to reset stuck indexing sources", "err", err)
+	} else if n > 0 {
+		slog.Info("reset sources stuck in indexing", "count", n)
+	}
 
 	qdrantClient, err := vectorstorage.NewClient(ctx, cfg)
 	if err != nil {

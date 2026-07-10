@@ -923,6 +923,72 @@ func TestServiceIngest_DeleteVectorsError(t *testing.T) {
 	awaitError(ctx, t, svc, src.ID)
 }
 
+// TestServiceIngest_AlreadyIndexing verifies the compare-and-swap guard (#65):
+// a source already in indexing status is rejected with ErrAlreadyIndexing rather
+// than spawning a second re-ingest goroutine that would race on chunk/vector state.
+func TestServiceIngest_AlreadyIndexing(t *testing.T) {
+	ctx := context.Background()
+	svc := newSvc(ctx, t)
+	wid := insertWS(ctx, t)
+
+	const content = "# Hello\nOriginal content."
+	src, err := svc.Create(ctx, CreateRequest{WorkspaceID: wid, Name: "already-indexing"}, []FileUpload{
+		{Name: "file.md", Content: bytes.NewBufferString(content), Size: int64(len(content))},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	awaitIndexed(ctx, t, svc, src.ID)
+
+	// Simulate an in-flight ingest by forcing the source into indexing status.
+	if _, err := sharedPool.Exec(ctx, `UPDATE sources SET status = $1 WHERE id = $2`, model.SourceStatusIndexing, src.ID); err != nil {
+		t.Fatalf("force indexing status: %v", err)
+	}
+
+	if err := svc.Ingest(ctx, src.ID); !errors.Is(err, ErrAlreadyIndexing) {
+		t.Fatalf("Ingest on already-indexing source = %v, want ErrAlreadyIndexing", err)
+	}
+}
+
+// TestResetStuckIndexing verifies the startup reconciliation (#45): a source left
+// in indexing status by a crashed process is reset to error.
+func TestResetStuckIndexing(t *testing.T) {
+	ctx := context.Background()
+	svc := newSvc(ctx, t)
+	wid := insertWS(ctx, t)
+
+	id := uuid.New()
+	if err := svc.insertSource(ctx, model.Source{
+		ID:          id,
+		WorkspaceID: wid,
+		Name:        "stuck",
+		Type:        model.SourceTypeFile,
+		URI:         "sources/stuck/",
+		Status:      model.SourceStatusIndexing,
+		Metadata:    json.RawMessage(`{}`),
+		CreatedAt:   time.Now(),
+		UpdatedAt:   time.Now(),
+	}); err != nil {
+		t.Fatalf("insertSource: %v", err)
+	}
+
+	n, err := ResetStuckIndexing(ctx, sharedPool)
+	if err != nil {
+		t.Fatalf("ResetStuckIndexing: %v", err)
+	}
+	if n < 1 {
+		t.Fatalf("ResetStuckIndexing count = %d, want >= 1", n)
+	}
+
+	got, err := svc.GetByID(ctx, id)
+	if err != nil {
+		t.Fatalf("GetByID: %v", err)
+	}
+	if got.Status != model.SourceStatusError {
+		t.Fatalf("status after reset = %q, want %q", got.Status, model.SourceStatusError)
+	}
+}
+
 // ── Helpers for pipeline-level tests ─────────────────────────────────────────
 
 // buildCustomSvc builds a SourceService like newSvc but accepts custom pool,

@@ -349,6 +349,20 @@ func TestIngestSource_ServiceError(t *testing.T) {
 	}
 }
 
+func TestIngestSource_AlreadyIndexing(t *testing.T) {
+	h := NewHandler(&fakeService{err: ErrAlreadyIndexing}, NewProgressBus(), allowMembers(), testMaxUpload)
+	id := uuid.New()
+
+	r := routedRequest(http.MethodPost, "/sources/"+id.String()+"/ingest",
+		map[string]string{"id": id.String()}, nil)
+	w := httptest.NewRecorder()
+	h.IngestSource(w, r)
+
+	if w.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d", w.Code)
+	}
+}
+
 // ── ListChunks ────────────────────────────────────────────────────────────────
 
 func TestListChunks_Success(t *testing.T) {

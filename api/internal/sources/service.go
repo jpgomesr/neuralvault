@@ -3,6 +3,7 @@ package sources
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -24,6 +25,11 @@ import (
 	"github.com/jpgomesr/NeuralVault/internal/storage"
 	"github.com/jpgomesr/NeuralVault/internal/vectorstorage"
 )
+
+// ErrAlreadyIndexing is returned by Ingest when the source is already being
+// indexed, preventing concurrent re-ingest goroutines from racing on chunk and
+// vector state.
+var ErrAlreadyIndexing = errors.New("source is already indexing")
 
 // FileUpload carries the content of a single uploaded file. Name is the file's
 // path relative to the uploaded root (e.g. "docs/intro.md"); it is sanitized
@@ -163,8 +169,12 @@ func (s *SourceService) Ingest(ctx context.Context, sourceID uuid.UUID) error {
 		return fmt.Errorf("loading source: %w", err)
 	}
 
-	if err := s.updateStatus(ctx, source.ID, model.SourceStatusIndexing); err != nil {
-		return fmt.Errorf("updating source status: %w", err)
+	// Atomically claim the source for indexing. The compare-and-swap rejects a
+	// second concurrent ingest (and an ingest of a source whose initial Create
+	// goroutine is still running) with ErrAlreadyIndexing, so two goroutines can
+	// never race on chunk delete/insert and vector state.
+	if err := s.claimForIndexing(ctx, source.ID); err != nil {
+		return err
 	}
 	source.Status = model.SourceStatusIndexing
 
@@ -632,6 +642,40 @@ func (s *SourceService) insertSourceFiles(ctx context.Context, workspaceID uuid.
 		}
 	}
 	return nil
+}
+
+// claimForIndexing atomically transitions a source into indexing only if it is
+// not already indexing. It returns ErrAlreadyIndexing when another ingest already
+// holds the source, which the caller surfaces as an HTTP 409.
+func (s *SourceService) claimForIndexing(ctx context.Context, id uuid.UUID) error {
+	tag, err := s.pool.Exec(ctx,
+		`UPDATE sources SET status = $1, updated_at = now()
+		 WHERE id = $2 AND status <> $1`,
+		model.SourceStatusIndexing, id,
+	)
+	if err != nil {
+		return fmt.Errorf("claim source for indexing: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrAlreadyIndexing
+	}
+	return nil
+}
+
+// ResetStuckIndexing marks every source still in indexing status as errored and
+// returns the number of rows reset. It is meant to run once at startup: because
+// indexing only ever runs in an in-process goroutine, any source left in indexing
+// is a leftover from a crashed or restarted process and would otherwise block the
+// SSE status stream until its 15-minute timeout.
+func ResetStuckIndexing(ctx context.Context, pool storage.Pool) (int64, error) {
+	tag, err := pool.Exec(ctx,
+		`UPDATE sources SET status = $1, updated_at = now() WHERE status = $2`,
+		model.SourceStatusError, model.SourceStatusIndexing,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("reset stuck indexing sources: %w", err)
+	}
+	return tag.RowsAffected(), nil
 }
 
 func (s *SourceService) updateStatus(ctx context.Context, id uuid.UUID, status model.SourceStatus) error {
