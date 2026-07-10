@@ -349,6 +349,9 @@ const docTemplate = `{
                     "401": {
                         "description": "Unauthorized"
                     },
+                    "403": {
+                        "description": "Forbidden"
+                    },
                     "500": {
                         "description": "Internal Server Error"
                     }
@@ -467,6 +470,9 @@ const docTemplate = `{
                     "401": {
                         "description": "Unauthorized"
                     },
+                    "403": {
+                        "description": "Forbidden"
+                    },
                     "409": {
                         "description": "Conflict"
                     },
@@ -501,6 +507,9 @@ const docTemplate = `{
                     },
                     "401": {
                         "description": "Unauthorized"
+                    },
+                    "403": {
+                        "description": "Forbidden"
                     },
                     "500": {
                         "description": "Internal Server Error"

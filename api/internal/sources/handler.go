@@ -175,6 +175,7 @@ func (h *Handler) ListSources(w http.ResponseWriter, r *http.Request) {
 // @Success 202
 // @Failure 400
 // @Failure 401
+// @Failure 403
 // @Failure 409
 // @Failure 500
 // @Router /sources/{id}/ingest [post]
@@ -183,6 +184,17 @@ func (h *Handler) IngestSource(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		slog.WarnContext(r.Context(), "invalid ingest source request", "err", "invalid source id", "request_id", logger.RequestID(r.Context()))
 		http.Error(w, "invalid source id: must be a UUID", http.StatusBadRequest)
+		return
+	}
+
+	source, err := h.service.GetByID(r.Context(), sourceID)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "ingest source failed", "err", err, "source_id", sourceID, "request_id", logger.RequestID(r.Context()))
+		http.Error(w, "failed to load source: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if !workspaces.EnsureMember(w, r, h.members, source.WorkspaceID) {
 		return
 	}
 
@@ -215,6 +227,7 @@ func (h *Handler) IngestSource(w http.ResponseWriter, r *http.Request) {
 // @Success 200
 // @Failure 400
 // @Failure 401
+// @Failure 403
 // @Failure 500
 // @Router /sources/{id}/chunks [get]
 func (h *Handler) ListChunks(w http.ResponseWriter, r *http.Request) {
@@ -222,6 +235,17 @@ func (h *Handler) ListChunks(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		slog.WarnContext(r.Context(), "invalid list chunks request", "err", "invalid source id", "request_id", logger.RequestID(r.Context()))
 		http.Error(w, "invalid source id: must be a UUID", http.StatusBadRequest)
+		return
+	}
+
+	source, err := h.service.GetByID(r.Context(), sourceID)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "list chunks failed", "err", err, "source_id", sourceID, "request_id", logger.RequestID(r.Context()))
+		http.Error(w, "failed to load source: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if !workspaces.EnsureMember(w, r, h.members, source.WorkspaceID) {
 		return
 	}
 
@@ -355,6 +379,7 @@ func (h *Handler) GetFileContent(w http.ResponseWriter, r *http.Request) {
 // @Success 200
 // @Failure 400
 // @Failure 401
+// @Failure 403
 // @Failure 500
 // @Router /sources/{id}/status [get]
 func (h *Handler) StreamStatus(w http.ResponseWriter, r *http.Request) {
@@ -362,6 +387,17 @@ func (h *Handler) StreamStatus(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		slog.WarnContext(r.Context(), "invalid stream status request", "err", "invalid source id", "request_id", logger.RequestID(r.Context()))
 		http.Error(w, "invalid source id: must be a UUID", http.StatusBadRequest)
+		return
+	}
+
+	source, err := h.service.GetByID(r.Context(), sourceID)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "stream status failed", "err", err, "source_id", sourceID, "request_id", logger.RequestID(r.Context()))
+		http.Error(w, "failed to load source: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if !workspaces.EnsureMember(w, r, h.members, source.WorkspaceID) {
 		return
 	}
 
@@ -385,7 +421,8 @@ func (h *Handler) StreamStatus(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	// If already in a terminal state, send the final event and return immediately.
-	source, err := h.service.GetByID(r.Context(), sourceID)
+	// Re-read after subscribing: the pre-subscribe read above only guards auth.
+	source, err = h.service.GetByID(r.Context(), sourceID)
 	if err != nil {
 		writeSSE(w, ProgressEvent{Type: EventError, Error: "source not found"})
 		flusher.Flush()
