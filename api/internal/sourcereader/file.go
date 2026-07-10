@@ -64,12 +64,23 @@ func (r *FileReader) Read(ctx context.Context, source model.Source) ([]chunking.
 			return fmt.Errorf("reading %q: %w", path, err)
 		}
 
+		// Store the path relative to RootPath so chunk metadata carries the
+		// same stable identifier as source_files.name, rather than the
+		// ephemeral absolute temp-dir path (which changes every re-ingest).
+		rel, err := filepath.Rel(meta.RootPath, path)
+		if err != nil || rel == "." {
+			// RootPath is the file itself (single-file root) or an unexpected
+			// mismatch: fall back to the base name.
+			rel = filepath.Base(path)
+		}
+		rel = filepath.ToSlash(rel) // object keys / metadata always use "/"
+
 		requests = append(requests, chunking.ChunkRequest{
 			SourceID:    source.ID,
 			WorkspaceID: source.WorkspaceID,
 			Content:     string(content),
 			ContentType: contentType,
-			FilePath:    path,
+			FilePath:    rel,
 		})
 		return nil
 	})

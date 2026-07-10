@@ -541,6 +541,55 @@ func TestServiceFiles_RoundTrip(t *testing.T) {
 	}
 }
 
+// TestServiceFiles_SameBasename reproduces issue #64: two files sharing a
+// basename in different directories must both be stored and indexed, neither
+// silently overwriting the other in object storage.
+func TestServiceFiles_SameBasename(t *testing.T) {
+	ctx := context.Background()
+	svc := newSvc(ctx, t)
+	wid := insertWS(ctx, t)
+
+	const docsContent = "# Docs readme"
+	const apiContent = "# API readme"
+	src, err := svc.Create(ctx, CreateRequest{WorkspaceID: wid, Name: "vault"}, []FileUpload{
+		{Name: "docs/readme.md", Content: bytes.NewBufferString(docsContent), Size: int64(len(docsContent)), ContentType: "text/markdown"},
+		{Name: "api/readme.md", Content: bytes.NewBufferString(apiContent), Size: int64(len(apiContent)), ContentType: "text/markdown"},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	awaitIndexed(ctx, t, svc, src.ID)
+
+	files, err := svc.ListFiles(ctx, src.ID)
+	if err != nil {
+		t.Fatalf("ListFiles: %v", err)
+	}
+	if len(files) != 2 {
+		t.Fatalf("expected 2 files, got %d: %+v", len(files), files)
+	}
+	// Ordered by name: "api/readme.md" before "docs/readme.md".
+	if files[0].Name != "api/readme.md" || files[1].Name != "docs/readme.md" {
+		t.Fatalf("expected both distinct paths preserved, got %q and %q", files[0].Name, files[1].Name)
+	}
+
+	// Each file streams back its own original bytes — proof neither overwrote
+	// the other in object storage.
+	for name, want := range map[string]string{"docs/readme.md": docsContent, "api/readme.md": apiContent} {
+		rc, _, err := svc.OpenFile(ctx, src.ID, name)
+		if err != nil {
+			t.Fatalf("OpenFile %q: %v", name, err)
+		}
+		got, err := io.ReadAll(rc)
+		rc.Close() //nolint:errcheck
+		if err != nil {
+			t.Fatalf("read %q: %v", name, err)
+		}
+		if string(got) != want {
+			t.Errorf("content mismatch for %q: want %q, got %q", name, want, string(got))
+		}
+	}
+}
+
 func TestServiceStoreFile_UploadError(t *testing.T) {
 	ctx := context.Background()
 	wid := insertWS(ctx, t)
