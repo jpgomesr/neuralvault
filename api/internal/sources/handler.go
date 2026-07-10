@@ -2,6 +2,7 @@ package sources
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -174,6 +175,7 @@ func (h *Handler) ListSources(w http.ResponseWriter, r *http.Request) {
 // @Success 202
 // @Failure 400
 // @Failure 401
+// @Failure 409
 // @Failure 500
 // @Router /sources/{id}/ingest [post]
 func (h *Handler) IngestSource(w http.ResponseWriter, r *http.Request) {
@@ -185,6 +187,11 @@ func (h *Handler) IngestSource(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.service.Ingest(r.Context(), sourceID); err != nil {
+		if errors.Is(err, ErrAlreadyIndexing) {
+			slog.WarnContext(r.Context(), "ingest rejected: already indexing", "source_id", sourceID, "request_id", logger.RequestID(r.Context()))
+			http.Error(w, "source is already indexing", http.StatusConflict)
+			return
+		}
 		slog.ErrorContext(r.Context(), "ingest source failed", "err", err, "source_id", sourceID, "request_id", logger.RequestID(r.Context()))
 		http.Error(w, "failed to start ingest: "+err.Error(), http.StatusInternalServerError)
 		return
