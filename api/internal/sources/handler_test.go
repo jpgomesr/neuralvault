@@ -29,6 +29,7 @@ type fakeService struct {
 	fileContent string
 	fileType    string
 	err         error
+	ingestErr   error
 	filesErr    error
 	openErr     error
 }
@@ -38,7 +39,7 @@ func (f *fakeService) Create(_ context.Context, _ CreateRequest, _ []FileUpload)
 }
 
 func (f *fakeService) Ingest(_ context.Context, _ uuid.UUID) error {
-	return f.err
+	return f.ingestErr
 }
 
 func (f *fakeService) List(_ context.Context, _ uuid.UUID) ([]model.Source, error) {
@@ -310,7 +311,35 @@ func TestListSources_ServiceError(t *testing.T) {
 // ── IngestSource ─────────────────────────────────────────────────────────────
 
 func TestIngestSource_Success(t *testing.T) {
-	h := NewHandler(&fakeService{}, NewProgressBus(), allowMembers(), testMaxUpload)
+	src := sourceWithStatus(model.SourceStatusIndexed)
+	h := NewHandler(&fakeService{source: src}, NewProgressBus(), allowMembers(), testMaxUpload)
+
+	r := routedRequest(http.MethodPost, "/sources/"+src.ID.String()+"/ingest",
+		map[string]string{"id": src.ID.String()}, nil)
+	w := httptest.NewRecorder()
+	h.IngestSource(w, r)
+
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestIngestSource_ForbiddenWhenNotMember(t *testing.T) {
+	src := sourceWithStatus(model.SourceStatusIndexed)
+	h := NewHandler(&fakeService{source: src}, NewProgressBus(), fakeMembers{member: false}, testMaxUpload)
+
+	r := routedRequest(http.MethodPost, "/sources/"+src.ID.String()+"/ingest",
+		map[string]string{"id": src.ID.String()}, nil)
+	w := httptest.NewRecorder()
+	h.IngestSource(w, r)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", w.Code)
+	}
+}
+
+func TestIngestSource_SourceNotFound(t *testing.T) {
+	h := NewHandler(&fakeService{err: errTest("not found")}, NewProgressBus(), allowMembers(), testMaxUpload)
 	id := uuid.New()
 
 	r := routedRequest(http.MethodPost, "/sources/"+id.String()+"/ingest",
@@ -318,8 +347,8 @@ func TestIngestSource_Success(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.IngestSource(w, r)
 
-	if w.Code != http.StatusAccepted {
-		t.Fatalf("expected 202, got %d: %s", w.Code, w.Body.String())
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", w.Code)
 	}
 }
 
@@ -336,11 +365,11 @@ func TestIngestSource_InvalidID(t *testing.T) {
 }
 
 func TestIngestSource_ServiceError(t *testing.T) {
-	h := NewHandler(&fakeService{err: errTest("ingest error")}, NewProgressBus(), allowMembers(), testMaxUpload)
-	id := uuid.New()
+	src := sourceWithStatus(model.SourceStatusIndexed)
+	h := NewHandler(&fakeService{source: src, ingestErr: errTest("ingest error")}, NewProgressBus(), allowMembers(), testMaxUpload)
 
-	r := routedRequest(http.MethodPost, "/sources/"+id.String()+"/ingest",
-		map[string]string{"id": id.String()}, nil)
+	r := routedRequest(http.MethodPost, "/sources/"+src.ID.String()+"/ingest",
+		map[string]string{"id": src.ID.String()}, nil)
 	w := httptest.NewRecorder()
 	h.IngestSource(w, r)
 
@@ -350,11 +379,11 @@ func TestIngestSource_ServiceError(t *testing.T) {
 }
 
 func TestIngestSource_AlreadyIndexing(t *testing.T) {
-	h := NewHandler(&fakeService{err: ErrAlreadyIndexing}, NewProgressBus(), allowMembers(), testMaxUpload)
-	id := uuid.New()
+	src := sourceWithStatus(model.SourceStatusIndexing)
+	h := NewHandler(&fakeService{source: src, ingestErr: ErrAlreadyIndexing}, NewProgressBus(), allowMembers(), testMaxUpload)
 
-	r := routedRequest(http.MethodPost, "/sources/"+id.String()+"/ingest",
-		map[string]string{"id": id.String()}, nil)
+	r := routedRequest(http.MethodPost, "/sources/"+src.ID.String()+"/ingest",
+		map[string]string{"id": src.ID.String()}, nil)
 	w := httptest.NewRecorder()
 	h.IngestSource(w, r)
 
@@ -366,12 +395,12 @@ func TestIngestSource_AlreadyIndexing(t *testing.T) {
 // ── ListChunks ────────────────────────────────────────────────────────────────
 
 func TestListChunks_Success(t *testing.T) {
+	src := sourceWithStatus(model.SourceStatusIndexed)
 	chunks := []model.Chunk{{ID: uuid.New(), Content: "hello"}}
-	h := NewHandler(&fakeService{chunks: chunks}, NewProgressBus(), allowMembers(), testMaxUpload)
-	id := uuid.New()
+	h := NewHandler(&fakeService{source: src, chunks: chunks}, NewProgressBus(), allowMembers(), testMaxUpload)
 
-	r := routedRequest(http.MethodGet, "/sources/"+id.String()+"/chunks",
-		map[string]string{"id": id.String()}, nil)
+	r := routedRequest(http.MethodGet, "/sources/"+src.ID.String()+"/chunks",
+		map[string]string{"id": src.ID.String()}, nil)
 	w := httptest.NewRecorder()
 	h.ListChunks(w, r)
 
@@ -385,6 +414,20 @@ func TestListChunks_Success(t *testing.T) {
 	}
 	if len(got) != 1 {
 		t.Fatalf("expected 1 chunk, got %d", len(got))
+	}
+}
+
+func TestListChunks_ForbiddenWhenNotMember(t *testing.T) {
+	src := sourceWithStatus(model.SourceStatusIndexed)
+	h := NewHandler(&fakeService{source: src}, NewProgressBus(), fakeMembers{member: false}, testMaxUpload)
+
+	r := routedRequest(http.MethodGet, "/sources/"+src.ID.String()+"/chunks",
+		map[string]string{"id": src.ID.String()}, nil)
+	w := httptest.NewRecorder()
+	h.ListChunks(w, r)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", w.Code)
 	}
 }
 
@@ -641,8 +684,25 @@ func TestStreamStatus_SourceNotFound(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.StreamStatus(w, r)
 
-	if !strings.Contains(w.Body.String(), `"type":"error"`) {
-		t.Errorf("expected error event in body, got: %s", w.Body.String())
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestStreamStatus_ForbiddenWhenNotMember(t *testing.T) {
+	src := sourceWithStatus(model.SourceStatusIndexing)
+	h := NewHandler(&fakeService{source: src}, NewProgressBus(), fakeMembers{member: false}, testMaxUpload)
+
+	r := routedRequest(http.MethodGet, "/sources/"+src.ID.String()+"/status",
+		map[string]string{"id": src.ID.String()}, nil)
+	w := httptest.NewRecorder()
+	h.StreamStatus(w, r)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", w.Code)
+	}
+	if ct := w.Header().Get("Content-Type"); strings.Contains(ct, "text/event-stream") {
+		t.Errorf("expected no SSE headers on forbidden response, got Content-Type %q", ct)
 	}
 }
 
