@@ -38,6 +38,8 @@ npm install
 npm run dev                  # http://localhost:3000
 npm run lint                 # next lint
 npm run type-check           # tsc --noEmit
+npm run test                 # vitest run
+npm run test:coverage        # vitest run --coverage (matches CI's test-coverage-web.yml)
 npm run build                # production build
 ```
 
@@ -107,6 +109,36 @@ Both embeddings and LLM inference are pluggable by design — no provider is har
 **ADRs:** significant technical decisions go in `docs/adr/` using the template at `docs/adr/ADR-XXX-template.md`
 
 **Specs:** technical specs live in `docs/specs/` using the template at `docs/specs/SPEC-XXX-template.md`, drafted via the `/spec` command — ADRs record decisions, specs describe components (implemented or planned)
+
+## Claude Code skills
+
+`.claude/skills/` holds project-committed Skills that Claude Code triggers automatically from context, unlike the explicit `/command`s in `.claude/commands/` (`/architecture`, `/commit`, `/issue`, `/pr`, `/review`, `/spec`). Keep each in sync with the code, docs, or CI config it describes as those change.
+
+**Workflow:**
+- **`run`** — the local launch sequence (Docker infra → migrations → API → frontend → sign-in), plus the CLI's current auth limitation
+- **`verify`** — mirrors the actual CI gates (`ci-api.yml`, `ci-web.yml`, the swagger-drift check) and how to exercise the affected flow live before calling a change done
+- **`code-review`** — auto-triggered version of `/review`'s convention check against `.claude/anti-patterns.md` and `.claude/glossary.md`
+
+**Backend patterns:**
+- **`go-feature-domain`** — the three-file domain layout, its justified exceptions, and testing conventions
+- **`go-provider-interface`** — the pluggable-backend pattern (`embedding`, `llm`, `vectorstorage`, `objectstorage`, `storage`), its fail-fast startup convention, and two known wiring inconsistencies (`chunking`, `sourcereader`)
+
+**Backend domains with non-obvious behavior:**
+- **`auth`** — the three login surfaces and the custom (non-JWT) session cookie scheme
+- **`sources-ingestion`** — in-process indexing, stuck-index recovery, the re-ingest CAS guard, and path normalization
+- **`retrieval`** — defense-in-depth workspace filtering, rank-based re-sorting after hydration, `topK` clamping
+- **`workspaces`** — why `EnsureMember` is a manual guard, not middleware, and that roles aren't enforced yet
+
+**Infrastructure / technology:**
+- **`postgres-migrations`** — migrations run through a separate `cmd/migrate` binary, never automatically by the server
+- **`qdrant`** — the intentionally leaky, protobuf-typed vector store interface (ADR-008)
+- **`ollama`** — the fail-fast model check and why the LLM client has no HTTP timeout
+- **`swagger`** — the annotation → `make swag` → CI drift-check flow
+
+**Frontend:**
+- **`web-conventions`** — the `lib/api/` → `hooks/` (TanStack Query) → `components/` layering, and the SSE exception to it
+- **`shadcn-ui`** — the official shadcn/ui CLI (`npx shadcn@latest add ...`) and this project's actual `web/components.json` config; no third-party registries or paid services
+- **`tanstack-query`** — `@tanstack/react-query` v5 API reference (queries, mutations, invalidation, SSR/hydration) backing the `web-conventions` hook layer
 
 ## Constraints
 
