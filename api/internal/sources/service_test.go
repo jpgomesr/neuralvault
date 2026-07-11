@@ -188,6 +188,18 @@ func (p resetFailingPool) Exec(ctx context.Context, sql string, args ...any) (pg
 	return p.Pool.Exec(ctx, sql, args...)
 }
 
+// sourceRowDeleteFailingPool fails the Exec used by Delete to remove a
+// source's row (identified by "DELETE FROM sources"), so that error path can
+// be exercised. Other statements delegate normally.
+type sourceRowDeleteFailingPool struct{ storage.Pool }
+
+func (p sourceRowDeleteFailingPool) Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
+	if strings.Contains(sql, "DELETE FROM sources") {
+		return pgconn.CommandTag{}, fmt.Errorf("injected source row delete failure")
+	}
+	return p.Pool.Exec(ctx, sql, args...)
+}
+
 // errReader always fails on Read, used to exercise copy-error branches.
 type errReader struct{}
 
@@ -1305,6 +1317,30 @@ func TestServiceDelete_ObjectDeleteError(t *testing.T) {
 	}
 	if _, err := svc.GetByID(ctx, src.ID); err != nil {
 		t.Errorf("expected source row to survive a failed object delete, got: %v", err)
+	}
+}
+
+func TestServiceDelete_RowDeleteError(t *testing.T) {
+	ctx := context.Background()
+	wid := insertWS(ctx, t)
+	store := newFakeStore()
+	svc := buildSvcWithStore(ctx, t, sharedPool, store)
+
+	src, err := svc.Create(ctx, CreateRequest{WorkspaceID: wid, Name: "x"}, []FileUpload{
+		{Name: "a.md", Content: bytes.NewBufferString("hi"), Size: 2},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	awaitIndexed(ctx, t, svc, src.ID)
+
+	svc.pool = sourceRowDeleteFailingPool{Pool: sharedPool}
+	err = svc.Delete(ctx, src.ID)
+	if err == nil || !strings.Contains(err.Error(), "deleting source row") {
+		t.Fatalf("expected deleting source row error, got: %v", err)
+	}
+	if _, err := svc.GetByID(ctx, src.ID); err != nil {
+		t.Errorf("expected source row to survive a failed row delete, got: %v", err)
 	}
 }
 
