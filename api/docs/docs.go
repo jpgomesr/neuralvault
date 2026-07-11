@@ -142,6 +142,115 @@ const docTemplate = `{
                 }
             }
         },
+        "/conversations": {
+            "get": {
+                "description": "Returns the workspace's conversations, most recently active first.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "conversations"
+                ],
+                "summary": "List a workspace's conversations",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Workspace UUID",
+                        "name": "workspace_id",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK"
+                    },
+                    "400": {
+                        "description": "Bad Request"
+                    },
+                    "401": {
+                        "description": "Unauthorized"
+                    },
+                    "403": {
+                        "description": "Forbidden"
+                    },
+                    "500": {
+                        "description": "Internal Server Error"
+                    }
+                }
+            },
+            "post": {
+                "description": "Creates an untitled conversation from a JSON body {\"workspace_id\": uuid}.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "conversations"
+                ],
+                "summary": "Create a conversation",
+                "responses": {
+                    "201": {
+                        "description": "Created"
+                    },
+                    "400": {
+                        "description": "Bad Request"
+                    },
+                    "401": {
+                        "description": "Unauthorized"
+                    },
+                    "403": {
+                        "description": "Forbidden"
+                    },
+                    "500": {
+                        "description": "Internal Server Error"
+                    }
+                }
+            }
+        },
+        "/conversations/{id}/messages": {
+            "get": {
+                "description": "Returns the conversation's messages, oldest first.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "conversations"
+                ],
+                "summary": "List a conversation's messages",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Conversation UUID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK"
+                    },
+                    "400": {
+                        "description": "Bad Request"
+                    },
+                    "401": {
+                        "description": "Unauthorized"
+                    },
+                    "403": {
+                        "description": "Forbidden"
+                    },
+                    "404": {
+                        "description": "Not Found"
+                    },
+                    "500": {
+                        "description": "Internal Server Error"
+                    }
+                }
+            }
+        },
         "/health": {
             "get": {
                 "description": "Probes every infrastructure dependency (Postgres, Qdrant, MinIO, Keycloak, Ollama) and reports each one. Returns 200 when all are healthy and 503 when any is down.",
@@ -170,7 +279,7 @@ const docTemplate = `{
         },
         "/query": {
             "post": {
-                "description": "Embeds the question from a JSON body {\"workspace_id\": uuid, \"question\": string, \"top_k\": int} and returns the top-k matching chunks ordered by descending similarity score.",
+                "description": "Embeds the question from a JSON body {\"workspace_id\": uuid, \"question\": string, \"top_k\": int, \"conversation_id\": uuid (optional)} and returns the top-k matching chunks ordered by descending similarity score. If conversation_id is set, persists the question as a message on that conversation (no answer is generated here to persist).",
                 "consumes": [
                     "application/json"
                 ],
@@ -202,7 +311,7 @@ const docTemplate = `{
         },
         "/query/stream": {
             "post": {
-                "description": "Runs retrieval for a JSON body {\"workspace_id\": uuid, \"question\": string, \"top_k\": int}, then streams SSE events: one \"sources\" event with the grounding chunks, incremental \"token\" events, and a terminal \"done\" or \"error\" event.",
+                "description": "Runs retrieval for a JSON body {\"workspace_id\": uuid, \"question\": string, \"top_k\": int, \"conversation_id\": uuid (optional)}, then streams SSE events: one \"sources\" event with the grounding chunks, incremental \"token\" events, and a terminal \"done\" or \"error\" event. If conversation_id is set, persists the question and the completed answer (with sources) as messages on that conversation.",
                 "consumes": [
                     "application/json"
                 ],

@@ -109,6 +109,79 @@ paths:
       summary: Native email/password login
       tags:
       - auth
+  /conversations:
+    get:
+      description: Returns the workspace's conversations, most recently active first.
+      parameters:
+      - description: Workspace UUID
+        in: query
+        name: workspace_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+        "400":
+          description: Bad Request
+        "401":
+          description: Unauthorized
+        "403":
+          description: Forbidden
+        "500":
+          description: Internal Server Error
+      summary: List a workspace's conversations
+      tags:
+      - conversations
+    post:
+      consumes:
+      - application/json
+      description: 'Creates an untitled conversation from a JSON body {"workspace_id":
+        uuid}.'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+        "400":
+          description: Bad Request
+        "401":
+          description: Unauthorized
+        "403":
+          description: Forbidden
+        "500":
+          description: Internal Server Error
+      summary: Create a conversation
+      tags:
+      - conversations
+  /conversations/{id}/messages:
+    get:
+      description: Returns the conversation's messages, oldest first.
+      parameters:
+      - description: Conversation UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+        "400":
+          description: Bad Request
+        "401":
+          description: Unauthorized
+        "403":
+          description: Forbidden
+        "404":
+          description: Not Found
+        "500":
+          description: Internal Server Error
+      summary: List a conversation's messages
+      tags:
+      - conversations
   /health:
     get:
       description: Probes every infrastructure dependency (Postgres, Qdrant, MinIO,
@@ -133,8 +206,10 @@ paths:
       consumes:
       - application/json
       description: 'Embeds the question from a JSON body {"workspace_id": uuid, "question":
-        string, "top_k": int} and returns the top-k matching chunks ordered by descending
-        similarity score.'
+        string, "top_k": int, "conversation_id": uuid (optional)} and returns the
+        top-k matching chunks ordered by descending similarity score. If conversation_id
+        is set, persists the question as a message on that conversation (no answer
+        is generated here to persist).'
       produces:
       - application/json
       responses:
@@ -156,9 +231,11 @@ paths:
       consumes:
       - application/json
       description: 'Runs retrieval for a JSON body {"workspace_id": uuid, "question":
-        string, "top_k": int}, then streams SSE events: one "sources" event with the
-        grounding chunks, incremental "token" events, and a terminal "done" or "error"
-        event.'
+        string, "top_k": int, "conversation_id": uuid (optional)}, then streams SSE
+        events: one "sources" event with the grounding chunks, incremental "token"
+        events, and a terminal "done" or "error" event. If conversation_id is set,
+        persists the question and the completed answer (with sources) as messages
+        on that conversation.'
       responses:
         "200":
           description: OK

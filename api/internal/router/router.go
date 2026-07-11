@@ -12,6 +12,7 @@ import (
 	"github.com/jpgomesr/NeuralVault/internal/chunking/markdown"
 	"github.com/jpgomesr/NeuralVault/internal/chunking/text"
 	"github.com/jpgomesr/NeuralVault/internal/config"
+	"github.com/jpgomesr/NeuralVault/internal/conversations"
 	"github.com/jpgomesr/NeuralVault/internal/embedding"
 	"github.com/jpgomesr/NeuralVault/internal/health"
 	"github.com/jpgomesr/NeuralVault/internal/llm"
@@ -57,8 +58,11 @@ func NewRouter(cfg *config.Config, pool storage.Pool, store objectstorage.Client
 	sourceService := sources.NewSourceService(pool, store, sourcereader.NewFileReader(), chunkService, bus, embedder, vectorStore, cfg.Qdrant.CollectionName, cfg.Ollama.EmbeddingModel)
 	sourceHandler := sources.NewHandler(sourceService, bus, workspaceService, cfg.Server.MaxUploadBytes)
 
+	conversationService := conversations.NewConversationService(pool)
+	conversationHandler := conversations.NewHandler(conversationService, workspaceService)
+
 	retrievalService := retrieval.NewRetrievalService(pool, embedder, vectorStore, llmProvider, cfg.Qdrant.CollectionName, cfg.Ollama.CompletionModel)
-	retrievalHandler := retrieval.NewHandler(retrievalService, workspaceService)
+	retrievalHandler := retrieval.NewHandler(retrievalService, workspaceService, conversationService)
 
 	authHandler := auth.NewHandler(authService, cfg.Auth.SessionSecret, cfg.Auth.CookieSecure, cfg.Auth.PostLoginURL)
 
@@ -74,6 +78,7 @@ func NewRouter(cfg *config.Config, pool storage.Pool, store objectstorage.Client
 			r.Mount("/workspaces", workspaces.Routes(workspaceHandler))
 			r.Mount("/sources", sources.Routes(sourceHandler))
 			r.Mount("/query", retrieval.Routes(retrievalHandler))
+			r.Mount("/conversations", conversations.Routes(conversationHandler))
 		})
 	})
 
