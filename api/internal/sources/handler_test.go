@@ -32,6 +32,7 @@ type fakeService struct {
 	ingestErr   error
 	filesErr    error
 	openErr     error
+	deleteErr   error
 }
 
 func (f *fakeService) Create(_ context.Context, _ CreateRequest, _ []FileUpload) (*model.Source, error) {
@@ -40,6 +41,10 @@ func (f *fakeService) Create(_ context.Context, _ CreateRequest, _ []FileUpload)
 
 func (f *fakeService) Ingest(_ context.Context, _ uuid.UUID) error {
 	return f.ingestErr
+}
+
+func (f *fakeService) Delete(_ context.Context, _ uuid.UUID) error {
+	return f.deleteErr
 }
 
 func (f *fakeService) List(_ context.Context, _ uuid.UUID) ([]model.Source, error) {
@@ -389,6 +394,75 @@ func TestIngestSource_AlreadyIndexing(t *testing.T) {
 
 	if w.Code != http.StatusConflict {
 		t.Fatalf("expected 409, got %d", w.Code)
+	}
+}
+
+// ── DeleteSource ─────────────────────────────────────────────────────────────
+
+func TestDeleteSource_Success(t *testing.T) {
+	src := sourceWithStatus(model.SourceStatusIndexed)
+	h := NewHandler(&fakeService{source: src}, NewProgressBus(), allowMembers(), testMaxUpload)
+
+	r := routedRequest(http.MethodDelete, "/sources/"+src.ID.String(),
+		map[string]string{"id": src.ID.String()}, nil)
+	w := httptest.NewRecorder()
+	h.DeleteSource(w, r)
+
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestDeleteSource_InvalidID(t *testing.T) {
+	h := NewHandler(&fakeService{}, NewProgressBus(), allowMembers(), testMaxUpload)
+
+	r := routedRequest(http.MethodDelete, "/sources/bad", map[string]string{"id": "bad"}, nil)
+	w := httptest.NewRecorder()
+	h.DeleteSource(w, r)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", w.Code)
+	}
+}
+
+func TestDeleteSource_ForbiddenWhenNotMember(t *testing.T) {
+	src := sourceWithStatus(model.SourceStatusIndexed)
+	h := NewHandler(&fakeService{source: src}, NewProgressBus(), fakeMembers{member: false}, testMaxUpload)
+
+	r := routedRequest(http.MethodDelete, "/sources/"+src.ID.String(),
+		map[string]string{"id": src.ID.String()}, nil)
+	w := httptest.NewRecorder()
+	h.DeleteSource(w, r)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d", w.Code)
+	}
+}
+
+func TestDeleteSource_SourceNotFound(t *testing.T) {
+	h := NewHandler(&fakeService{err: errTest("not found")}, NewProgressBus(), allowMembers(), testMaxUpload)
+	id := uuid.New()
+
+	r := routedRequest(http.MethodDelete, "/sources/"+id.String(), map[string]string{"id": id.String()}, nil)
+	w := httptest.NewRecorder()
+	h.DeleteSource(w, r)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", w.Code)
+	}
+}
+
+func TestDeleteSource_ServiceError(t *testing.T) {
+	src := sourceWithStatus(model.SourceStatusIndexed)
+	h := NewHandler(&fakeService{source: src, deleteErr: errTest("delete error")}, NewProgressBus(), allowMembers(), testMaxUpload)
+
+	r := routedRequest(http.MethodDelete, "/sources/"+src.ID.String(),
+		map[string]string{"id": src.ID.String()}, nil)
+	w := httptest.NewRecorder()
+	h.DeleteSource(w, r)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", w.Code)
 	}
 }
 

@@ -202,6 +202,7 @@ type fakeStore struct {
 	downloadErr     error
 	downloadReadErr bool
 	listErr         error
+	deleteErr       error
 }
 
 func newFakeStore() *fakeStore { return &fakeStore{objects: map[string][]byte{}} }
@@ -252,6 +253,9 @@ func (f *fakeStore) ListObjects(_ context.Context, prefix string) ([]string, err
 }
 
 func (f *fakeStore) Delete(_ context.Context, key string) error {
+	if f.deleteErr != nil {
+		return f.deleteErr
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	delete(f.objects, key)
@@ -1179,6 +1183,128 @@ func TestUpsertChunkVectors_UpsertError(t *testing.T) {
 	err := svc.upsertChunkVectors(ctx, chunks, embeddings)
 	if err == nil || !strings.Contains(err.Error(), "qdrant upsert") {
 		t.Fatalf("expected qdrant upsert error, got: %v", err)
+	}
+}
+
+// ── Delete tests ──────────────────────────────────────────────────────────────
+
+func TestServiceDelete_Success(t *testing.T) {
+	ctx := context.Background()
+	spy := &spyVectorStore{}
+	svc := newSvcVS(ctx, t, spy)
+	wid := insertWS(ctx, t)
+
+	const content = "# Hello\nContent to delete."
+	src, err := svc.Create(ctx, CreateRequest{WorkspaceID: wid, Name: "to-delete"}, []FileUpload{
+		{Name: "file.md", Content: bytes.NewBufferString(content), Size: int64(len(content))},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	awaitIndexed(ctx, t, svc, src.ID)
+
+	if err := svc.Delete(ctx, src.ID); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+
+	if _, err := svc.GetByID(ctx, src.ID); err == nil {
+		t.Error("expected GetByID to fail after Delete, source row still present")
+	}
+
+	deletes := spy.deletes()
+	if len(deletes) != 1 {
+		t.Fatalf("expected exactly one Qdrant delete, got %d", len(deletes))
+	}
+	if got := deleteFilterSourceID(t, deletes[0]); got != src.ID.String() {
+		t.Errorf("delete filter source_id = %q, want %q", got, src.ID.String())
+	}
+
+	keys, err := svc.store.ListObjects(ctx, src.URI)
+	if err != nil {
+		t.Fatalf("ListObjects after Delete: %v", err)
+	}
+	if len(keys) != 0 {
+		t.Errorf("expected no objects left under %q, got %v", src.URI, keys)
+	}
+}
+
+func TestServiceDelete_SourceNotFound(t *testing.T) {
+	ctx := context.Background()
+	svc := newSvc(ctx, t)
+
+	if err := svc.Delete(ctx, uuid.New()); err == nil {
+		t.Fatal("expected error deleting an unknown source")
+	}
+}
+
+func TestServiceDelete_VectorDeleteError(t *testing.T) {
+	ctx := context.Background()
+	svc := newSvcVS(ctx, t, deleteErrorVectorStore{})
+	wid := insertWS(ctx, t)
+
+	const content = "hi"
+	src, err := svc.Create(ctx, CreateRequest{WorkspaceID: wid, Name: "x"}, []FileUpload{
+		{Name: "a.md", Content: bytes.NewBufferString(content), Size: int64(len(content))},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	awaitIndexed(ctx, t, svc, src.ID)
+
+	err = svc.Delete(ctx, src.ID)
+	if err == nil || !strings.Contains(err.Error(), "qdrant delete") {
+		t.Fatalf("expected qdrant delete error, got: %v", err)
+	}
+	if _, err := svc.GetByID(ctx, src.ID); err != nil {
+		t.Errorf("expected source row to survive a failed vector delete, got: %v", err)
+	}
+}
+
+func TestServiceDelete_ListObjectsError(t *testing.T) {
+	ctx := context.Background()
+	wid := insertWS(ctx, t)
+	store := newFakeStore()
+	svc := buildSvcWithStore(ctx, t, sharedPool, store)
+
+	src, err := svc.Create(ctx, CreateRequest{WorkspaceID: wid, Name: "x"}, []FileUpload{
+		{Name: "a.md", Content: bytes.NewBufferString("hi"), Size: 2},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	awaitIndexed(ctx, t, svc, src.ID)
+
+	store.listErr = errors.New("list boom")
+	err = svc.Delete(ctx, src.ID)
+	if err == nil || !strings.Contains(err.Error(), "listing objects") {
+		t.Fatalf("expected listing objects error, got: %v", err)
+	}
+	if _, err := svc.GetByID(ctx, src.ID); err != nil {
+		t.Errorf("expected source row to survive a failed object list, got: %v", err)
+	}
+}
+
+func TestServiceDelete_ObjectDeleteError(t *testing.T) {
+	ctx := context.Background()
+	wid := insertWS(ctx, t)
+	store := newFakeStore()
+	svc := buildSvcWithStore(ctx, t, sharedPool, store)
+
+	src, err := svc.Create(ctx, CreateRequest{WorkspaceID: wid, Name: "x"}, []FileUpload{
+		{Name: "a.md", Content: bytes.NewBufferString("hi"), Size: 2},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	awaitIndexed(ctx, t, svc, src.ID)
+
+	store.deleteErr = errors.New("delete boom")
+	err = svc.Delete(ctx, src.ID)
+	if err == nil || !strings.Contains(err.Error(), "deleting object") {
+		t.Fatalf("expected deleting object error, got: %v", err)
+	}
+	if _, err := svc.GetByID(ctx, src.ID); err != nil {
+		t.Errorf("expected source row to survive a failed object delete, got: %v", err)
 	}
 }
 

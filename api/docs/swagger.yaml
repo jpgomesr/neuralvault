@@ -235,6 +235,30 @@ paths:
       summary: Create a source
       tags:
       - sources
+  /sources/{id}:
+    delete:
+      description: Deletes the source, its chunks and file records, its Qdrant vectors,
+        and its object-storage files.
+      parameters:
+      - description: Source UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+        "401":
+          description: Unauthorized
+        "403":
+          description: Forbidden
+        "500":
+          description: Internal Server Error
+      summary: Delete a source
+      tags:
+      - sources
   /sources/{id}/chunks:
     get:
       description: Returns the indexed chunks produced from a source.

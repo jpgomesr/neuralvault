@@ -10,6 +10,7 @@ func Routes(h *Handler) chi.Router {
 	r.Post("/", h.CreateSource)
 	r.Get("/", h.ListSources)
 	r.Post("/{id}/ingest", h.IngestSource)
+	r.Delete("/{id}", h.DeleteSource)
 	r.Get("/{id}/chunks", h.ListChunks)
 	r.Get("/{id}/files", h.ListFiles)
 	r.Get("/{id}/files/content", h.GetFileContent)
