@@ -8,6 +8,12 @@ export async function listSources(workspaceId: string): Promise<Source[]> {
   return (await res.json()) ?? [];
 }
 
+/** deleteSource removes a source and everything derived from it. */
+export async function deleteSource(sourceId: string): Promise<void> {
+  const res = await fetch(`/api/sources/${encodeURIComponent(sourceId)}`, { method: "DELETE" });
+  if (!res.ok) throw new Error(`delete source failed: ${res.status}`);
+}
+
 /** listSourceFiles returns the original files stored for a source. */
 export async function listSourceFiles(sourceId: string): Promise<SourceFile[]> {
   const res = await fetch(`/api/sources/${encodeURIComponent(sourceId)}/files`);

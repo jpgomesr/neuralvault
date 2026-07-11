@@ -12,7 +12,7 @@ import Markdown from "@/components/Markdown";
 import { useSourceFiles } from "@/hooks/use-sources";
 import { fetchSourceFileText, sourceFileContentUrl } from "@/lib/api/sources";
 import type { SourceFile } from "@/lib/types";
-import { cn } from "@/lib/utils";
+import { cn, formatBytes } from "@/lib/utils";
 
 type PreviewKind = "markdown" | "text" | "image" | "pdf" | "download";
 
@@ -36,13 +36,6 @@ function previewKind(file: SourceFile): PreviewKind {
   if (IMAGE_EXTS.has(e) || type.startsWith("image/")) return "image";
   if (TEXT_EXTS.has(e) || type.startsWith("text/")) return "text";
   return "download";
-}
-
-function formatSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  const kb = bytes / 1024;
-  if (kb < 1024) return `${kb.toFixed(1)} KB`;
-  return `${(kb / 1024).toFixed(1)} MB`;
 }
 
 function FilePreview({ sourceId, file }: { sourceId: string; file: SourceFile }) {
@@ -84,21 +77,24 @@ function FilePreview({ sourceId, file }: { sourceId: string; file: SourceFile })
 export default function SourceFilesDialog({
   sourceId,
   sourceName,
+  initialFile,
   open,
   onOpenChange,
 }: {
   sourceId: string;
   sourceName: string;
+  /** Pre-select a specific file (e.g. the one a chat citation pointed at). */
+  initialFile?: string;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
   const { data: files = [], isLoading, error } = useSourceFiles(sourceId, open);
   const [selected, setSelected] = useState<string | null>(null);
 
-  // Fall back to the first file until the user picks one. The dialog is
-  // remounted on each open (parent renders it conditionally), so selection
-  // resets naturally without an effect.
-  const activeName = selected ?? files[0]?.name ?? null;
+  // Fall back to initialFile, then the first file, until the user picks one.
+  // The dialog is remounted on each open (parent renders it conditionally),
+  // so selection resets naturally without an effect.
+  const activeName = selected ?? initialFile ?? files[0]?.name ?? null;
   const active = files.find((f) => f.name === activeName) ?? null;
 
   return (
@@ -116,7 +112,7 @@ export default function SourceFilesDialog({
 
         {files.length > 0 && (
           <div className="grid grid-cols-[220px_1fr] gap-4">
-            <ul className="max-h-[60vh] overflow-y-auto border-r border-border pr-2 text-sm">
+            <ul className="max-h-[65vh] overflow-y-auto border-r border-border pr-2 text-sm">
               {files.map((f) => (
                 <li key={f.id}>
                   <button
@@ -128,12 +124,12 @@ export default function SourceFilesDialog({
                     )}
                   >
                     <span className="break-all">{f.name}</span>
-                    <span className="text-xs text-muted-foreground">{formatSize(f.size)}</span>
+                    <span className="text-xs text-muted-foreground">{formatBytes(f.size)}</span>
                   </button>
                 </li>
               ))}
             </ul>
-            <div className="max-h-[60vh] min-w-0 overflow-auto">
+            <div className="max-h-[65vh] min-w-0 overflow-auto pr-3">
               {active ? (
                 <FilePreview sourceId={sourceId} file={active} />
               ) : (
