@@ -217,6 +217,49 @@ func (h *Handler) IngestSource(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// DeleteSource godoc
+//
+// Removes the source's row (cascading to chunks and files), its Qdrant
+// vectors, and its object-storage files. Irreversible.
+//
+// @Summary Delete a source
+// @Description Deletes the source, its chunks and file records, its Qdrant vectors, and its object-storage files.
+// @Tags sources
+// @Param id path string true "Source UUID"
+// @Success 204
+// @Failure 400
+// @Failure 401
+// @Failure 403
+// @Failure 500
+// @Router /sources/{id} [delete]
+func (h *Handler) DeleteSource(w http.ResponseWriter, r *http.Request) {
+	sourceID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		slog.WarnContext(r.Context(), "invalid delete source request", "err", "invalid source id", "request_id", logger.RequestID(r.Context()))
+		http.Error(w, "invalid source id: must be a UUID", http.StatusBadRequest)
+		return
+	}
+
+	source, err := h.service.GetByID(r.Context(), sourceID)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "delete source failed", "err", err, "source_id", sourceID, "request_id", logger.RequestID(r.Context()))
+		http.Error(w, "failed to load source: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if !workspaces.EnsureMember(w, r, h.members, source.WorkspaceID) {
+		return
+	}
+
+	if err := h.service.Delete(r.Context(), sourceID); err != nil {
+		slog.ErrorContext(r.Context(), "delete source failed", "err", err, "source_id", sourceID, "request_id", logger.RequestID(r.Context()))
+		http.Error(w, "failed to delete source: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
 // ListChunks godoc
 //
 // @Summary List chunks of a source

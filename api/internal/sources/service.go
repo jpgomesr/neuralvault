@@ -56,6 +56,10 @@ type Service interface {
 	// Ingest re-indexes an existing source from object storage in the background.
 	Ingest(ctx context.Context, sourceID uuid.UUID) error
 
+	// Delete removes a source's Postgres row (cascading to its chunks and
+	// source_files), its Qdrant vectors, and its object-storage files.
+	Delete(ctx context.Context, sourceID uuid.UUID) error
+
 	List(ctx context.Context, workspaceID uuid.UUID) ([]model.Source, error)
 	ListChunks(ctx context.Context, sourceID uuid.UUID) ([]model.Chunk, error)
 	GetByID(ctx context.Context, sourceID uuid.UUID) (*model.Source, error)
@@ -182,6 +186,35 @@ func (s *SourceService) Ingest(ctx context.Context, sourceID uuid.UUID) error {
 
 	go s.reingestInBackground(*source)
 
+	return nil
+}
+
+// Delete removes source, its vectors, and its object-storage files. The
+// Postgres row is deleted last so a failure partway through leaves the source
+// visible (and re-deletable) rather than silently orphaning its content.
+func (s *SourceService) Delete(ctx context.Context, sourceID uuid.UUID) error {
+	source, err := s.getByID(ctx, sourceID)
+	if err != nil {
+		return fmt.Errorf("loading source: %w", err)
+	}
+
+	if err := s.deleteSourceVectors(ctx, sourceID); err != nil {
+		return err
+	}
+
+	keys, err := s.store.ListObjects(ctx, source.URI)
+	if err != nil {
+		return fmt.Errorf("listing objects for source %s: %w", sourceID, err)
+	}
+	for _, key := range keys {
+		if err := s.store.Delete(ctx, key); err != nil {
+			return fmt.Errorf("deleting object %q: %w", key, err)
+		}
+	}
+
+	if _, err := s.pool.Exec(ctx, `DELETE FROM sources WHERE id = $1`, sourceID); err != nil {
+		return fmt.Errorf("deleting source row %s: %w", sourceID, err)
+	}
 	return nil
 }
 
