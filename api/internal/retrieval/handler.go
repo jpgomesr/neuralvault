@@ -81,7 +81,7 @@ func (h *Handler) ensureConversationInWorkspace(w http.ResponseWriter, r *http.R
 // the top-k matching chunks ordered by descending similarity score.
 //
 // @Summary Query a workspace
-// @Description Embeds the question from a JSON body {"workspace_id": uuid, "question": string, "top_k": int} and returns the top-k matching chunks ordered by descending similarity score.
+// @Description Embeds the question from a JSON body {"workspace_id": uuid, "question": string, "top_k": int, "conversation_id": uuid (optional)} and returns the top-k matching chunks ordered by descending similarity score. If conversation_id is set, persists the question as a message on that conversation (no answer is generated here to persist).
 // @Tags query
 // @Accept json
 // @Produce json
@@ -166,7 +166,7 @@ func (h *Handler) Query(w http.ResponseWriter, r *http.Request) {
 // the session cookie); the non-streaming Query above remains for the CLI.
 //
 // @Summary Stream a grounded answer (SSE)
-// @Description Runs retrieval for a JSON body {"workspace_id": uuid, "question": string, "top_k": int}, then streams SSE events: one "sources" event with the grounding chunks, incremental "token" events, and a terminal "done" or "error" event.
+// @Description Runs retrieval for a JSON body {"workspace_id": uuid, "question": string, "top_k": int, "conversation_id": uuid (optional)}, then streams SSE events: one "sources" event with the grounding chunks, incremental "token" events, and a terminal "done" or "error" event. If conversation_id is set, persists the question and the completed answer (with sources) as messages on that conversation.
 // @Tags query
 // @Accept json
 // @Success 200
