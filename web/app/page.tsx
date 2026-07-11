@@ -1,38 +1,24 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import Link from "next/link";
+import { useState } from "react";
 import Chat from "@/components/Chat";
+import ChatList from "@/components/ChatList";
+import CreateWorkspaceDialog from "@/components/CreateWorkspaceDialog";
 import Sidebar from "@/components/Sidebar";
 import SignIn from "@/components/SignIn";
+import WorkspaceSwitcher from "@/components/WorkspaceSwitcher";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useLogoutMutation, useMe } from "@/hooks/use-me";
-import { useCreateWorkspaceMutation, useWorkspaces } from "@/hooks/use-workspaces";
+import { useActiveWorkspace } from "@/lib/workspace-context";
 
 export default function Home() {
   const { me } = useMe();
-  const { data: workspaces = [] } = useWorkspaces(!!me);
-  const createWorkspaceMutation = useCreateWorkspaceMutation();
+  const { activeId, setActiveId, isLoading: workspacesLoading } = useActiveWorkspace();
   const logoutMutation = useLogoutMutation();
-  const [activeId, setActiveId] = useState<string>("");
-
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- defaults to the first workspace once the list loads
-    setActiveId((prev) => prev || workspaces[0]?.ID || "");
-  }, [workspaces]);
-
-  function onCreateWorkspace() {
-    const name = window.prompt("New workspace name");
-    if (!name) return;
-    createWorkspaceMutation.mutate(name, { onSuccess: (ws) => setActiveId(ws.ID) });
-  }
+  const [createOpen, setCreateOpen] = useState(false);
 
   function onLogout() {
     logoutMutation.mutate(undefined, { onSuccess: () => setActiveId("") });
@@ -40,29 +26,15 @@ export default function Home() {
 
   if (me === undefined) return <div className="center hint">Loading…</div>;
   if (me === null) return <SignIn />;
+  if (workspacesLoading) return <div className="center hint">Loading…</div>;
 
   return (
     <div className="app">
       <div className="topbar">
         <span className="brand">NeuralVault</span>
-        <Select
-          value={activeId}
-          onValueChange={setActiveId}
-          disabled={workspaces.length === 0}
-        >
-          <SelectTrigger>
-            <SelectValue placeholder="No workspaces" />
-          </SelectTrigger>
-          <SelectContent>
-            {workspaces.map((w) => (
-              <SelectItem key={w.ID} value={w.ID}>
-                {w.Name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Button variant="secondary" onClick={onCreateWorkspace}>
-          + New
+        <WorkspaceSwitcher />
+        <Button variant="ghost" asChild>
+          <Link href="/sources">Sources</Link>
         </Button>
         <div className="spacer" />
         <span className="email">{me.email}</span>
@@ -73,15 +45,33 @@ export default function Home() {
 
       {activeId ? (
         <div className="layout">
-          <Sidebar workspaceId={activeId} />
+          <aside className="sidebar">
+            <Tabs defaultValue="chats">
+              <TabsList className="w-full">
+                <TabsTrigger value="chats">Chats</TabsTrigger>
+                <TabsTrigger value="sources">Sources</TabsTrigger>
+              </TabsList>
+              <TabsContent value="chats">
+                <ChatList />
+              </TabsContent>
+              <TabsContent value="sources">
+                <Sidebar workspaceId={activeId} />
+              </TabsContent>
+            </Tabs>
+          </aside>
           <Chat workspaceId={activeId} />
         </div>
       ) : (
         <div className="center">
           <Card className="items-center p-6 text-center">
             <p className="hint">Create a workspace to get started.</p>
-            <Button onClick={onCreateWorkspace}>Create workspace</Button>
+            <Button onClick={() => setCreateOpen(true)}>Create workspace</Button>
           </Card>
+          <CreateWorkspaceDialog
+            open={createOpen}
+            onOpenChange={setCreateOpen}
+            onCreated={(ws) => setActiveId(ws.ID)}
+          />
         </div>
       )}
     </div>

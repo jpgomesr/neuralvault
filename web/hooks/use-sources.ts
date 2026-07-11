@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  deleteSource,
   listSourceFiles,
   listSources,
   uploadSource,
@@ -34,6 +35,17 @@ export function useUploadSourceMutation(workspaceId: string) {
   return useMutation({
     mutationFn: ({ name, files }: { name: string; files: UploadFile[] }) =>
       uploadSource(workspaceId, name, files),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: sourcesQueryKey(workspaceId) });
+    },
+  });
+}
+
+/** useDeleteSourceMutation deletes a source and invalidates its workspace's list. */
+export function useDeleteSourceMutation(workspaceId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (sourceId: string) => deleteSource(sourceId),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: sourcesQueryKey(workspaceId) });
     },
