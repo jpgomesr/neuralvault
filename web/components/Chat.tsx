@@ -4,32 +4,40 @@ import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { streamQuery } from "@/lib/api/query";
-import type { SourceChunk } from "@/lib/types";
+import { useConversations } from "@/lib/conversation-context";
+import { useSources } from "@/hooks/use-sources";
+import type { ChatMessage, SourceChunk } from "@/lib/types";
 import Markdown from "@/components/Markdown";
+import SourceFilesDialog from "@/components/SourceFilesDialog";
 
-interface Message {
-  role: "user" | "assistant";
-  content: string;
-  sources?: SourceChunk[];
-  streaming?: boolean;
-}
+// Stable fallback reference so the "no conversation found" case doesn't
+// produce a new array on every render (which would retrigger effects keyed
+// off `messages`).
+const EMPTY_MESSAGES: ChatMessage[] = [];
 
 /**
- * Chat renders a multi-turn conversation for the active workspace. On submit it
- * streams the answer from /query/stream, showing the grounding sources as chips
- * and appending tokens as they arrive.
+ * Chat renders the active conversation thread for the active workspace. On
+ * submit it streams the answer from /query/stream, showing the grounding
+ * sources as chips and appending tokens as they arrive.
  */
 export default function Chat({ workspaceId }: { workspaceId: string }) {
-  const [messages, setMessages] = useState<Message[]>([]);
+  const { conversations, activeId, updateMessages } = useConversations();
+  const messages = conversations.find((c) => c.id === activeId)?.messages ?? EMPTY_MESSAGES;
+  const { data: sources = [] } = useSources(workspaceId);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  const [preview, setPreview] = useState<{ sourceId: string; sourceName: string; file?: string } | null>(
+    null,
+  );
   const endRef = useRef<HTMLDivElement>(null);
 
-  // Reset the conversation when the workspace changes.
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- resets local state on workspace switch
-    setMessages([]);
-  }, [workspaceId]);
+  // openCitation resolves a grounding chunk back to its source and opens the
+  // file viewer. Disabled until the API sends source_id on each chunk.
+  function openCitation(chunk: SourceChunk) {
+    if (!chunk.source_id) return;
+    const source = sources.find((s) => s.ID === chunk.source_id);
+    setPreview({ sourceId: chunk.source_id, sourceName: source?.Name ?? "Source", file: chunk.file_path });
+  }
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -40,17 +48,21 @@ export default function Chat({ workspaceId }: { workspaceId: string }) {
     const question = input.trim();
     if (!question || busy) return;
 
+    // Captured so a reply keeps landing in the thread it started in even if
+    // the user switches to a different conversation before it finishes.
+    const conversationId = activeId;
+
     setInput("");
     setBusy(true);
     // Append the user turn and an empty assistant turn we stream into.
-    setMessages((m) => [
+    updateMessages(conversationId, (m) => [
       ...m,
       { role: "user", content: question },
       { role: "assistant", content: "", streaming: true },
     ]);
 
-    const patchAssistant = (fn: (msg: Message) => Message) =>
-      setMessages((m) => {
+    const patchAssistant = (fn: (msg: ChatMessage) => ChatMessage) =>
+      updateMessages(conversationId, (m) => {
         const next = [...m];
         for (let i = next.length - 1; i >= 0; i--) {
           if (next[i].role === "assistant") {
@@ -95,9 +107,16 @@ export default function Chat({ workspaceId }: { workspaceId: string }) {
             {m.sources && m.sources.length > 0 && (
               <div className="sources">
                 {m.sources.map((s) => (
-                  <span className="chip" key={s.chunk_id} title={s.content}>
+                  <button
+                    type="button"
+                    className="chip"
+                    key={s.chunk_id}
+                    title={s.source_id ? "View source file" : s.content}
+                    disabled={!s.source_id}
+                    onClick={() => openCitation(s)}
+                  >
                     {s.content.slice(0, 60)} · {s.score.toFixed(2)}
-                  </span>
+                  </button>
                 ))}
               </div>
             )}
@@ -118,6 +137,16 @@ export default function Chat({ workspaceId }: { workspaceId: string }) {
           {busy ? "…" : "Send"}
         </Button>
       </form>
+
+      {preview && (
+        <SourceFilesDialog
+          sourceId={preview.sourceId}
+          sourceName={preview.sourceName}
+          initialFile={preview.file}
+          open={preview !== null}
+          onOpenChange={(o) => !o && setPreview(null)}
+        />
+      )}
     </section>
   );
 }
