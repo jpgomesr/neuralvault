@@ -134,6 +134,57 @@ func TestQueryStream_DoesNotPersistPartialAnswerOnError(t *testing.T) {
 	}
 }
 
+func TestQueryStream_PersistQuestionError(t *testing.T) {
+	wid := uuid.New()
+	convID := uuid.New()
+	fake := &fakeRetriever{streamOut: []llm.StreamChunk{{Content: "hi"}, {Done: true}}}
+	convSvc := &fakeConversationService{
+		conv:      &model.Conversation{ID: convID, WorkspaceID: wid},
+		appendErr: errTest("insert failed"),
+	}
+	h := NewHandler(fake, allowMembers(), convSvc)
+
+	body := `{"workspace_id":"` + wid.String() + `","question":"hi?","conversation_id":"` + convID.String() + `"}`
+	w := httptest.NewRecorder()
+	h.QueryStream(w, postQuery(body))
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d: %s", w.Code, w.Body.String())
+	}
+	if ct := w.Header().Get("Content-Type"); ct == "text/event-stream" {
+		t.Fatalf("SSE headers should not be written when persisting the question fails first")
+	}
+}
+
+func TestQueryStream_PersistAnswerError_LogsButDoesNotFailStream(t *testing.T) {
+	wid := uuid.New()
+	convID := uuid.New()
+	fake := &fakeRetriever{streamOut: []llm.StreamChunk{{Content: "hi"}, {Done: true}}}
+	// The question (1st AppendMessage call) persists fine; only the answer
+	// (2nd call) fails — this happens after SSE headers are already flushed,
+	// so the failure can only be logged, not turned into an HTTP error.
+	convSvc := &fakeConversationService{
+		conv:             &model.Conversation{ID: convID, WorkspaceID: wid},
+		appendErr:        errTest("insert failed"),
+		failAppendOnCall: 2,
+	}
+	h := NewHandler(fake, allowMembers(), convSvc)
+
+	body := `{"workspace_id":"` + wid.String() + `","question":"hi?","conversation_id":"` + convID.String() + `"}`
+	w := httptest.NewRecorder()
+	h.QueryStream(w, postQuery(body))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 (headers already sent), got %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "event: done") {
+		t.Fatalf("expected the stream to still complete with a done event, got:\n%s", w.Body.String())
+	}
+	if len(convSvc.appended) != 1 {
+		t.Fatalf("expected only the question persisted, got %d messages", len(convSvc.appended))
+	}
+}
+
 func TestQueryStream_ConversationWorkspaceMismatch(t *testing.T) {
 	convID := uuid.New()
 	convSvc := &fakeConversationService{conv: &model.Conversation{ID: convID, WorkspaceID: uuid.New()}}

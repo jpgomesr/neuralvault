@@ -77,7 +77,12 @@ type fakeConversationService struct {
 	conv      *model.Conversation
 	getErr    error
 	appendErr error
-	appended  []appendedMessage
+	// failAppendOnCall, when > 0, makes appendErr fail only the Nth
+	// AppendMessage call (1-indexed) so a test can let the question persist
+	// while the answer fails, or vice versa. 0 means appendErr fails every call.
+	failAppendOnCall int
+	appendCalls      int
+	appended         []appendedMessage
 }
 
 func (f *fakeConversationService) Create(context.Context, uuid.UUID) (*model.Conversation, error) {
@@ -99,7 +104,8 @@ func (f *fakeConversationService) ListMessages(context.Context, uuid.UUID) ([]mo
 	return nil, nil
 }
 func (f *fakeConversationService) AppendMessage(_ context.Context, conversationID uuid.UUID, role model.MessageRole, content string, sources json.RawMessage) (*model.Message, error) {
-	if f.appendErr != nil {
+	f.appendCalls++
+	if f.appendErr != nil && (f.failAppendOnCall == 0 || f.appendCalls == f.failAppendOnCall) {
 		return nil, f.appendErr
 	}
 	f.appended = append(f.appended, appendedMessage{conversationID, role, content, sources})
@@ -350,5 +356,36 @@ func TestQuery_ConversationNotFound(t *testing.T) {
 
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("expected 404, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestQuery_ConversationLoadError(t *testing.T) {
+	convSvc := &fakeConversationService{getErr: errTest("connection reset")}
+	h := NewHandler(&fakeRetriever{}, allowMembers(), convSvc)
+
+	body := `{"workspace_id":"` + uuid.New().String() + `","question":"hi","conversation_id":"` + uuid.New().String() + `"}`
+	w := httptest.NewRecorder()
+	h.Query(w, postQuery(body))
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestQuery_PersistQuestionError(t *testing.T) {
+	wid := uuid.New()
+	convID := uuid.New()
+	convSvc := &fakeConversationService{
+		conv:      &model.Conversation{ID: convID, WorkspaceID: wid},
+		appendErr: errTest("insert failed"),
+	}
+	h := NewHandler(&fakeRetriever{}, allowMembers(), convSvc)
+
+	body := `{"workspace_id":"` + wid.String() + `","question":"hi","conversation_id":"` + convID.String() + `"}`
+	w := httptest.NewRecorder()
+	h.Query(w, postQuery(body))
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d: %s", w.Code, w.Body.String())
 	}
 }
