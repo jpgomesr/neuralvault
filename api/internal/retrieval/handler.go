@@ -2,12 +2,16 @@ package retrieval
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/google/uuid"
+	"github.com/jpgomesr/NeuralVault/internal/conversations"
 	"github.com/jpgomesr/NeuralVault/internal/logger"
+	"github.com/jpgomesr/NeuralVault/internal/model"
 	"github.com/jpgomesr/NeuralVault/internal/workspaces"
 )
 
@@ -16,6 +20,10 @@ type queryRequest struct {
 	WorkspaceID uuid.UUID `json:"workspace_id"`
 	Question    string    `json:"question"`
 	TopK        int       `json:"top_k"`
+	// ConversationID is optional. When set, the question (and, for
+	// /query/stream, the completed answer) are persisted as messages on the
+	// conversation. Omitting it keeps the endpoint fully stateless.
+	ConversationID *uuid.UUID `json:"conversation_id,omitempty"`
 }
 
 // queryResultItem is a single hydrated chunk in the query response.
@@ -32,14 +40,39 @@ type queryResponse struct {
 
 // Handler holds HTTP handler methods for the retrieval domain.
 type Handler struct {
-	service Retriever
-	members workspaces.Service
+	service       Retriever
+	members       workspaces.Service
+	conversations conversations.Service
 }
 
 // NewHandler returns a Handler backed by service. members enforces that the
-// caller belongs to the queried workspace.
-func NewHandler(service Retriever, members workspaces.Service) *Handler {
-	return &Handler{service: service, members: members}
+// caller belongs to the queried workspace; conversationsSvc persists
+// messages when a request carries a conversation_id.
+func NewHandler(service Retriever, members workspaces.Service, conversationsSvc conversations.Service) *Handler {
+	return &Handler{service: service, members: members, conversations: conversationsSvc}
+}
+
+// ensureConversationInWorkspace loads conversationID and verifies it belongs
+// to workspaceID, so a conversation from one workspace can't be used to
+// persist messages while querying another. Writes the HTTP error itself and
+// reports whether the caller should continue, mirroring workspaces.EnsureMember.
+func (h *Handler) ensureConversationInWorkspace(w http.ResponseWriter, r *http.Request, conversationID, workspaceID uuid.UUID) bool {
+	conv, err := h.conversations.GetByID(r.Context(), conversationID)
+	if errors.Is(err, conversations.ErrNotFound) {
+		http.Error(w, "conversation not found", http.StatusNotFound)
+		return false
+	}
+	if err != nil {
+		slog.ErrorContext(r.Context(), "loading conversation failed", "err", err, "conversation_id", conversationID, "request_id", logger.RequestID(r.Context()))
+		http.Error(w, "failed to load conversation: "+err.Error(), http.StatusInternalServerError)
+		return false
+	}
+	if conv.WorkspaceID != workspaceID {
+		slog.WarnContext(r.Context(), "conversation does not belong to workspace", "conversation_id", conversationID, "workspace_id", workspaceID, "request_id", logger.RequestID(r.Context()))
+		http.Error(w, "conversation does not belong to workspace_id", http.StatusBadRequest)
+		return false
+	}
+	return true
 }
 
 // Query godoc
@@ -81,6 +114,10 @@ func (h *Handler) Query(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if req.ConversationID != nil && !h.ensureConversationInWorkspace(w, r, *req.ConversationID, req.WorkspaceID) {
+		return
+	}
+
 	results, err := h.service.Retrieve(r.Context(), RetrieveRequest{
 		WorkspaceID: req.WorkspaceID,
 		Query:       req.Question,
@@ -98,6 +135,16 @@ func (h *Handler) Query(w http.ResponseWriter, r *http.Request) {
 			ChunkID: res.Chunk.ID.String(),
 			Content: res.Chunk.Content,
 			Score:   res.Score,
+		}
+	}
+
+	// /query never generates an LLM answer (see Retrieve above), so only the
+	// question has a turn to persist here; /query/stream persists the answer too.
+	if req.ConversationID != nil {
+		if _, err := h.conversations.AppendMessage(r.Context(), *req.ConversationID, model.MessageRoleUser, req.Question, nil); err != nil {
+			slog.ErrorContext(r.Context(), "persisting question failed", "err", err, "conversation_id", *req.ConversationID, "request_id", logger.RequestID(r.Context()))
+			http.Error(w, "failed to persist message: "+err.Error(), http.StatusInternalServerError)
+			return
 		}
 	}
 
@@ -148,6 +195,10 @@ func (h *Handler) QueryStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if req.ConversationID != nil && !h.ensureConversationInWorkspace(w, r, *req.ConversationID, req.WorkspaceID) {
+		return
+	}
+
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		http.Error(w, "streaming not supported by this server", http.StatusInternalServerError)
@@ -167,6 +218,16 @@ func (h *Handler) QueryStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Persist the question before writing SSE headers, so a failure here can
+	// still return a plain error status instead of corrupting an open stream.
+	if req.ConversationID != nil {
+		if _, err := h.conversations.AppendMessage(r.Context(), *req.ConversationID, model.MessageRoleUser, req.Question, nil); err != nil {
+			slog.ErrorContext(r.Context(), "persisting question failed", "err", err, "conversation_id", *req.ConversationID, "request_id", logger.RequestID(r.Context()))
+			http.Error(w, "failed to persist message: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -181,23 +242,34 @@ func (h *Handler) QueryStream(w http.ResponseWriter, r *http.Request) {
 			Score:   res.Score,
 		}
 	}
+	sourcesPayload, _ := json.Marshal(queryResponse{Results: items})
 	writeSSEEvent(w, "sources", queryResponse{Results: items})
 	flusher.Flush()
 
+	var answer strings.Builder
 	for chunk := range stream {
 		if chunk.Error != nil {
 			slog.ErrorContext(r.Context(), "completion stream error", "err", chunk.Error, "workspace_id", req.WorkspaceID, "request_id", logger.RequestID(r.Context()))
 			writeSSEEvent(w, "error", map[string]string{"error": chunk.Error.Error()})
 			flusher.Flush()
+			// A partial answer isn't persisted — only completed turns are.
 			return
 		}
 		if chunk.Content != "" {
+			answer.WriteString(chunk.Content)
 			writeSSEEvent(w, "token", map[string]string{"content": chunk.Content})
 			flusher.Flush()
 		}
 		if chunk.Done {
 			writeSSEEvent(w, "done", map[string]any{})
 			flusher.Flush()
+			// SSE headers are already flushed, so a persistence failure here
+			// can only be logged, not turned into an HTTP error response.
+			if req.ConversationID != nil {
+				if _, err := h.conversations.AppendMessage(r.Context(), *req.ConversationID, model.MessageRoleAssistant, answer.String(), sourcesPayload); err != nil {
+					slog.ErrorContext(r.Context(), "persisting answer failed", "err", err, "conversation_id", *req.ConversationID, "request_id", logger.RequestID(r.Context()))
+				}
+			}
 			return
 		}
 	}

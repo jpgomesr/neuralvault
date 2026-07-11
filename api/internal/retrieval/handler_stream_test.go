@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/jpgomesr/NeuralVault/internal/llm"
+	"github.com/jpgomesr/NeuralVault/internal/model"
 )
 
 // These cover the QueryStream branches the happy-path/forbidden tests don't
@@ -16,7 +17,7 @@ import (
 // error chunk arriving mid-stream.
 
 func TestQueryStream_InvalidBody(t *testing.T) {
-	h := NewHandler(&fakeRetriever{}, allowMembers())
+	h := NewHandler(&fakeRetriever{}, allowMembers(), noConversations())
 
 	w := httptest.NewRecorder()
 	h.QueryStream(w, postQuery("not json"))
@@ -27,7 +28,7 @@ func TestQueryStream_InvalidBody(t *testing.T) {
 }
 
 func TestQueryStream_MissingWorkspaceID(t *testing.T) {
-	h := NewHandler(&fakeRetriever{}, allowMembers())
+	h := NewHandler(&fakeRetriever{}, allowMembers(), noConversations())
 
 	w := httptest.NewRecorder()
 	h.QueryStream(w, postQuery(`{"question":"hi"}`))
@@ -38,7 +39,7 @@ func TestQueryStream_MissingWorkspaceID(t *testing.T) {
 }
 
 func TestQueryStream_MissingQuestion(t *testing.T) {
-	h := NewHandler(&fakeRetriever{}, allowMembers())
+	h := NewHandler(&fakeRetriever{}, allowMembers(), noConversations())
 
 	w := httptest.NewRecorder()
 	h.QueryStream(w, postQuery(`{"workspace_id":"`+uuid.New().String()+`"}`))
@@ -49,7 +50,7 @@ func TestQueryStream_MissingQuestion(t *testing.T) {
 }
 
 func TestQueryStream_AnswerError(t *testing.T) {
-	h := NewHandler(&fakeRetriever{answerErr: errTest("boom")}, allowMembers())
+	h := NewHandler(&fakeRetriever{answerErr: errTest("boom")}, allowMembers(), noConversations())
 
 	body := `{"workspace_id":"` + uuid.New().String() + `","question":"hi"}`
 	w := httptest.NewRecorder()
@@ -64,7 +65,7 @@ func TestQueryStream_EmitsErrorEvent(t *testing.T) {
 	fake := &fakeRetriever{
 		streamOut: []llm.StreamChunk{{Content: "partial"}, {Error: errTest("model exploded")}},
 	}
-	h := NewHandler(fake, allowMembers())
+	h := NewHandler(fake, allowMembers(), noConversations())
 
 	body := `{"workspace_id":"` + uuid.New().String() + `","question":"hi?"}`
 	w := httptest.NewRecorder()
@@ -76,5 +77,77 @@ func TestQueryStream_EmitsErrorEvent(t *testing.T) {
 	out := w.Body.String()
 	if !strings.Contains(out, "event: error") || !strings.Contains(out, "model exploded") {
 		t.Fatalf("expected an error event in the stream, got:\n%s", out)
+	}
+}
+
+func TestQueryStream_PersistsQuestionAndAnswer(t *testing.T) {
+	wid := uuid.New()
+	convID := uuid.New()
+	chunkID := uuid.New()
+	fake := &fakeRetriever{
+		results:   []RetrievedChunk{{Chunk: model.Chunk{ID: chunkID, Content: "grounding"}, Score: 0.9}},
+		streamOut: []llm.StreamChunk{{Content: "Hel"}, {Content: "lo"}, {Done: true}},
+	}
+	convSvc := &fakeConversationService{conv: &model.Conversation{ID: convID, WorkspaceID: wid}}
+	h := NewHandler(fake, allowMembers(), convSvc)
+
+	body := `{"workspace_id":"` + wid.String() + `","question":"hi?","conversation_id":"` + convID.String() + `"}`
+	w := httptest.NewRecorder()
+	h.QueryStream(w, postQuery(body))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if len(convSvc.appended) != 2 {
+		t.Fatalf("expected 2 persisted messages (question + answer), got %d", len(convSvc.appended))
+	}
+	question, answer := convSvc.appended[0], convSvc.appended[1]
+	if question.role != model.MessageRoleUser || question.content != "hi?" {
+		t.Errorf("unexpected question message: %+v", question)
+	}
+	if answer.role != model.MessageRoleAssistant || answer.content != "Hello" {
+		t.Errorf("unexpected answer message: %+v", answer)
+	}
+	if !strings.Contains(string(answer.sources), chunkID.String()) {
+		t.Errorf("expected answer sources to carry the grounding chunk, got %s", answer.sources)
+	}
+}
+
+func TestQueryStream_DoesNotPersistPartialAnswerOnError(t *testing.T) {
+	wid := uuid.New()
+	convID := uuid.New()
+	fake := &fakeRetriever{
+		streamOut: []llm.StreamChunk{{Content: "partial"}, {Error: errTest("model exploded")}},
+	}
+	convSvc := &fakeConversationService{conv: &model.Conversation{ID: convID, WorkspaceID: wid}}
+	h := NewHandler(fake, allowMembers(), convSvc)
+
+	body := `{"workspace_id":"` + wid.String() + `","question":"hi?","conversation_id":"` + convID.String() + `"}`
+	w := httptest.NewRecorder()
+	h.QueryStream(w, postQuery(body))
+
+	if len(convSvc.appended) != 1 {
+		t.Fatalf("expected only the question persisted (no partial answer), got %d messages", len(convSvc.appended))
+	}
+	if convSvc.appended[0].role != model.MessageRoleUser {
+		t.Errorf("expected the persisted message to be the question, got %+v", convSvc.appended[0])
+	}
+}
+
+func TestQueryStream_ConversationWorkspaceMismatch(t *testing.T) {
+	convID := uuid.New()
+	convSvc := &fakeConversationService{conv: &model.Conversation{ID: convID, WorkspaceID: uuid.New()}}
+	fake := &fakeRetriever{}
+	h := NewHandler(fake, allowMembers(), convSvc)
+
+	body := `{"workspace_id":"` + uuid.New().String() + `","question":"hi?","conversation_id":"` + convID.String() + `"}`
+	w := httptest.NewRecorder()
+	h.QueryStream(w, postQuery(body))
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+	if fake.gotReq.WorkspaceID != uuid.Nil {
+		t.Errorf("Answer was called despite the conversation/workspace mismatch")
 	}
 }

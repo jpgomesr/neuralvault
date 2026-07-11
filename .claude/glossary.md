@@ -16,6 +16,8 @@ Agent-only reference: not linked from public docs. If a term needs to be explain
 | **User** / **UserIdentity** | `User` is the canonical account. `UserIdentity` links an external auth provider identity (`provider` + `external_id`) to a `User`. | Do not conflate — a `User` can have multiple `UserIdentity` rows |
 | **Role** | A `UserWorkspace`'s permission level within a workspace: `owner`, `admin`, `member` (`model.WorkspaceRole`). | "Permission", "access level" |
 | **Retrieval** | The query-time pipeline (`internal/retrieval`): semantic search over Qdrant → chunk hydration from Postgres → grounded answer; reranking and context compression are planned per `docs/architecture.md`. | "Search" alone (search is one step inside retrieval) |
+| **Conversation** | A persisted chat thread scoped to a workspace (`model.Conversation`, `internal/conversations`). Owns an ordered sequence of Messages and a title derived from the first one. | "Thread", "session", "chat" |
+| **Message** | One turn in a Conversation: `user` or `assistant` (`model.Message`, `model.MessageRole`). An assistant Message may carry the grounding chunks it cited. | "Turn", "reply" |
 
 ## Adding a term
 
