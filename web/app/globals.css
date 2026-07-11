@@ -48,7 +48,13 @@ body {
   margin: 0;
   padding: 0;
   height: 100%;
-  background: var(--bg);
+  background:
+    radial-gradient(
+      circle at 50% 0%,
+      color-mix(in oklch, var(--brand), transparent 88%),
+      transparent 60%
+    ),
+    var(--bg);
   color: var(--text);
   font-family:
     system-ui,
@@ -156,14 +162,6 @@ input[type="text"] {
   overflow-y: auto;
 }
 
-.sidebar h2 {
-  font-size: 0.8rem;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  color: var(--muted-text);
-  margin: 1rem 0 0.5rem;
-}
-
 .source {
   display: flex;
   justify-content: space-between;
@@ -209,11 +207,20 @@ input[type="text"] {
   padding: 1.25rem;
   display: flex;
   flex-direction: column;
+  align-items: flex-start;
   gap: 1rem;
 }
 
 .msg {
   max-width: 720px;
+}
+
+.msg.user {
+  align-self: flex-end;
+}
+
+.msg.user .role {
+  text-align: right;
 }
 
 .msg .role {
@@ -245,6 +252,8 @@ input[type="text"] {
 }
 
 .chip {
+  font: inherit;
+  cursor: pointer;
   font-size: 0.75rem;
   color: var(--muted-text);
   background: var(--panel-2);
@@ -255,6 +264,16 @@ input[type="text"] {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.chip:hover:not(:disabled) {
+  border-color: var(--brand);
+  color: var(--text);
+}
+
+.chip:disabled {
+  cursor: default;
+  opacity: 0.7;
 }
 
 .composer {
@@ -269,31 +288,10 @@ input[type="text"] {
   flex: 1;
 }
 
-.uploader {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-
-.uploader .row {
-  display: flex;
-  gap: 0.4rem;
-}
-
 .mode-toggle {
   display: flex;
   gap: 0.4rem;
   margin-bottom: 0.5rem;
-}
-
-.batch-results {
-  list-style: none;
-  margin: 0.25rem 0 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 0.2rem;
-  font-size: 0.8rem;
 }
 
 .hint {
@@ -357,11 +355,16 @@ input[type="text"] {
 }
 
 .markdown pre {
+  margin: 0;
   background: var(--panel-2);
   border: 1px solid var(--border);
   border-radius: 8px;
   padding: 0.8rem 1rem;
   overflow-x: auto;
+}
+
+.markdown-pre-wrap {
+  margin: 0.6em 0;
 }
 
 .markdown pre code {
