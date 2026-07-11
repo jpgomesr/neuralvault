@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  deleteSource,
   fetchSourceFileText,
   filesToUploadFiles,
   groupFilesByFolder,
@@ -48,6 +49,19 @@ describe("listSources", () => {
   it("throws on an error status", async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse(null, { ok: false, status: 404 }));
     await expect(listSources("w1")).rejects.toThrow("list sources failed: 404");
+  });
+});
+
+describe("deleteSource", () => {
+  it("DELETEs the source and URL-encodes the id", async () => {
+    fetchMock.mockResolvedValueOnce({ ok: true } as Response);
+    await deleteSource("s 1");
+    expect(fetchMock).toHaveBeenCalledWith("/api/sources/s%201", { method: "DELETE" });
+  });
+
+  it("throws on an error status", async () => {
+    fetchMock.mockResolvedValueOnce({ ok: false, status: 404 } as Response);
+    await expect(deleteSource("s1")).rejects.toThrow("delete source failed: 404");
   });
 });
 
