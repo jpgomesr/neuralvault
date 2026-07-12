@@ -20,12 +20,15 @@ export async function streamQuery(
   workspaceId: string,
   question: string,
   handlers: QueryHandlers,
+  conversationId?: string,
   signal?: AbortSignal,
 ): Promise<void> {
   const res = await fetch("/api/query/stream", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ workspace_id: workspaceId, question }),
+    // conversation_id is dropped from the JSON body when undefined, keeping
+    // /query/stream fully stateless for callers that don't pass one.
+    body: JSON.stringify({ workspace_id: workspaceId, question, conversation_id: conversationId }),
     signal,
   });
   if (!res.ok || !res.body) {

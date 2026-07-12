@@ -5,19 +5,10 @@ import { Button } from "@/components/ui/button";
 import { useConversations } from "@/lib/conversation-context";
 import { cn } from "@/lib/utils";
 
-const TITLE_MAX = 40;
-
-function titleFor(messages: { role: string; content: string }[]): string {
-  const first = messages.find((m) => m.role === "user")?.content.trim();
-  if (!first) return "New chat";
-  return first.length > TITLE_MAX ? `${first.slice(0, TITLE_MAX)}…` : first;
-}
-
 /**
  * ChatList shows the active workspace's chat threads and lets the user
- * switch between them or start a new one. Threads aren't persisted yet
- * (see ConversationProvider) — this is the UI shell that will read from a
- * real endpoint once that lands.
+ * switch between them or start a new one. Titles are derived server-side
+ * from each conversation's first message (see internal/conversations).
  */
 export default function ChatList() {
   const { conversations, activeId, setActiveId, newConversation } = useConversations();
@@ -34,6 +25,9 @@ export default function ChatList() {
         <Plus className="size-3.5" />
         New chat
       </Button>
+      {conversations.length === 0 && (
+        <p className="px-2 text-sm text-muted-foreground">No conversations yet.</p>
+      )}
       <ul className="flex flex-col gap-1">
         {conversations.map((c) => (
           <li key={c.id}>
@@ -45,7 +39,7 @@ export default function ChatList() {
                 c.id === activeId && "bg-accent font-medium",
               )}
             >
-              {titleFor(c.messages)}
+              {c.title || "New chat"}
             </button>
           </li>
         ))}
