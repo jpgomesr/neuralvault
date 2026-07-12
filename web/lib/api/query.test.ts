@@ -56,8 +56,15 @@ describe("streamQuery", () => {
   it("passes an abort signal through to fetch", async () => {
     fetchMock.mockResolvedValueOnce(streamResponse([]));
     const signal = new AbortController().signal;
-    await streamQuery("w1", "q", {}, signal);
+    await streamQuery("w1", "q", {}, undefined, signal);
     expect(fetchMock.mock.calls[0][1].signal).toBe(signal);
+  });
+
+  it("includes conversation_id in the body when provided", async () => {
+    fetchMock.mockResolvedValueOnce(streamResponse([]));
+    await streamQuery("w1", "hello?", {}, "conv-1");
+    const [, init] = fetchMock.mock.calls[0];
+    expect(init.body).toBe(JSON.stringify({ workspace_id: "w1", question: "hello?", conversation_id: "conv-1" }));
   });
 });
 

@@ -50,8 +50,33 @@ export interface SourceProgress {
   error?: string;
 }
 
-// ChatMessage is one turn in a chat thread. Threads are currently kept in
-// memory only (see ConversationProvider); nothing here is persisted yet.
+// Conversation is a persisted chat thread (GET/POST /conversations). Like
+// Workspace and Source, it's serialised from a Go struct without json tags,
+// so its fields are PascalCase.
+export interface Conversation {
+  ID: string;
+  WorkspaceID: string;
+  Title: string;
+  CreatedAt: string;
+  UpdatedAt: string;
+}
+
+// PersistedMessage is one turn in a Conversation (GET /conversations/{id}/messages),
+// also PascalCase for the same reason. Sources mirrors the query "sources"
+// event's payload shape and is null for a user message.
+export interface PersistedMessage {
+  ID: string;
+  ConversationID: string;
+  Role: "user" | "assistant";
+  Content: string;
+  Sources: { results: SourceChunk[] } | null;
+  CreatedAt: string;
+}
+
+// ChatMessage is one turn in a chat thread, as rendered by Chat.tsx. It's the
+// in-memory view built from PersistedMessage history plus live-streaming
+// patches (see ConversationProvider) — not sent to or received from the API
+// directly.
 export interface ChatMessage {
   role: "user" | "assistant";
   content: string;

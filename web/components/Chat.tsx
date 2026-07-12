@@ -21,7 +21,7 @@ const EMPTY_MESSAGES: ChatMessage[] = [];
  * sources as chips and appending tokens as they arrive.
  */
 export default function Chat({ workspaceId }: { workspaceId: string }) {
-  const { conversations, activeId, updateMessages } = useConversations();
+  const { conversations, activeId, updateMessages, refreshConversations, ensureConversation } = useConversations();
   const messages = conversations.find((c) => c.id === activeId)?.messages ?? EMPTY_MESSAGES;
   const { data: sources = [] } = useSources(workspaceId);
   const [input, setInput] = useState("");
@@ -48,12 +48,23 @@ export default function Chat({ workspaceId }: { workspaceId: string }) {
     const question = input.trim();
     if (!question || busy) return;
 
-    // Captured so a reply keeps landing in the thread it started in even if
-    // the user switches to a different conversation before it finishes.
-    const conversationId = activeId;
-
     setInput("");
     setBusy(true);
+
+    // Lazily creates the conversation on first send, so the composer stays
+    // usable before the user has picked or started a thread. Held in a plain
+    // local from here on, so a reply keeps landing in the thread it started
+    // in even if the user switches to a different conversation before it
+    // finishes.
+    let conversationId: string;
+    try {
+      conversationId = await ensureConversation();
+    } catch {
+      setInput(question);
+      setBusy(false);
+      return;
+    }
+
     // Append the user turn and an empty assistant turn we stream into.
     updateMessages(conversationId, (m) => [
       ...m,
@@ -73,17 +84,28 @@ export default function Chat({ workspaceId }: { workspaceId: string }) {
         return next;
       });
 
-    await streamQuery(workspaceId, question, {
-      onSources: (chunks) => patchAssistant((msg) => ({ ...msg, sources: chunks })),
-      onToken: (text) => patchAssistant((msg) => ({ ...msg, content: msg.content + text })),
-      onDone: () => patchAssistant((msg) => ({ ...msg, streaming: false })),
-      onError: (message) =>
-        patchAssistant((msg) => ({
-          ...msg,
-          streaming: false,
-          content: msg.content || `⚠️ ${message}`,
-        })),
-    });
+    await streamQuery(
+      workspaceId,
+      question,
+      {
+        onSources: (chunks) => {
+          patchAssistant((msg) => ({ ...msg, sources: chunks }));
+          // The question (and its derived title, if this was the first
+          // message) is already persisted by the time this event arrives —
+          // no need to wait for the full answer to refresh the sidebar.
+          refreshConversations();
+        },
+        onToken: (text) => patchAssistant((msg) => ({ ...msg, content: msg.content + text })),
+        onDone: () => patchAssistant((msg) => ({ ...msg, streaming: false })),
+        onError: (message) =>
+          patchAssistant((msg) => ({
+            ...msg,
+            streaming: false,
+            content: msg.content || `⚠️ ${message}`,
+          })),
+      },
+      conversationId,
+    );
 
     setBusy(false);
   }
