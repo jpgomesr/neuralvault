@@ -114,8 +114,31 @@ type embedResponse struct {
 	Embeddings [][]float32 `json:"embeddings"`
 }
 
+// nomic-embed-text was trained with task-instruction prefixes and expects
+// them at inference time for good retrieval quality: queries and indexed
+// documents occupy different regions of embedding space unless each is
+// prefixed for its role. This is a quirk of this specific model, not a
+// general Ollama behavior — see usesNomicPrefixes.
+const (
+	nomicEmbedTextModel = "nomic-embed-text"
+	nomicQueryPrefix    = "search_query: "
+	nomicDocumentPrefix = "search_document: "
+)
+
+// usesNomicPrefixes reports whether the configured embedding model is
+// nomic-embed-text (bare name or any ":"-tagged variant, matching
+// ensureModelAvailable's name comparison). Other Ollama-served embedding
+// models (mxbai-embed-large, bge-*, all-minilm, ...) use different or no
+// prefix conventions, so prefixing must not apply unconditionally.
+func (c *Client) usesNomicPrefixes() bool {
+	return c.model == nomicEmbedTextModel || strings.HasPrefix(c.model, nomicEmbedTextModel+":")
+}
+
 // Embed returns the vector for a single piece of text.
 func (c *Client) Embed(ctx context.Context, text string) ([]float32, error) {
+	if c.usesNomicPrefixes() {
+		text = nomicQueryPrefix + text
+	}
 	vectors, err := c.embed(ctx, []string{text})
 	if err != nil {
 		return nil, err
@@ -129,9 +152,14 @@ func (c *Client) EmbedBatch(ctx context.Context, chunks []types.Chunk) ([]types.
 		return []types.Embedding{}, nil
 	}
 
+	prefixDocs := c.usesNomicPrefixes()
 	texts := make([]string, len(chunks))
 	for i, ch := range chunks {
-		texts[i] = ch.Text
+		if prefixDocs {
+			texts[i] = nomicDocumentPrefix + ch.Text
+		} else {
+			texts[i] = ch.Text
+		}
 	}
 
 	vectors, err := c.embed(ctx, texts)
