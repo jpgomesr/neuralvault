@@ -775,6 +775,7 @@ func TestGetFileContent_Disposition(t *testing.T) {
 		{"html with charset", "text/html; charset=utf-8", "attachment"},
 		{"svg", "image/svg+xml", "attachment"},
 		{"xhtml", "application/xhtml+xml", "attachment"},
+		{"unparseable", "image/png; charset", "attachment"}, // ParseMediaType error → unsafe
 		{"png", "image/png", "inline"},
 		{"pdf", "application/pdf", "inline"},
 	}
