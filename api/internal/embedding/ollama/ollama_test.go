@@ -44,6 +44,31 @@ func newTestClient(t *testing.T, embedHandler http.HandlerFunc) *ollama.Client {
 	return client
 }
 
+// newTestClientWithModel is like newTestClient but configures a non-default
+// embedding model, serving a matching /api/tags response so ollama.New's
+// availability check succeeds.
+func newTestClientWithModel(t *testing.T, model string, embedHandler http.HandlerFunc) *ollama.Client {
+	t.Helper()
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/tags", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"models": []map[string]string{{"name": model + ":latest"}},
+		})
+	})
+	mux.HandleFunc("/api/embed", embedHandler)
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	cfg := &config.Config{Ollama: config.Ollama{URL: srv.URL, EmbeddingModel: model}}
+	client, err := ollama.New(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("ollama.New: %v", err)
+	}
+	return client
+}
+
 func TestEmbed_Success(t *testing.T) {
 	client := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -87,8 +112,94 @@ func TestEmbed_RequestBody(t *testing.T) {
 		t.Fatalf("expected model %q, got %v", "nomic-embed-text", gotBody["model"])
 	}
 	input, ok := gotBody["input"].([]any)
+	if !ok || len(input) != 1 || input[0] != "search_query: hello world" {
+		t.Fatalf("expected input [%q], got %v", "search_query: hello world", gotBody["input"])
+	}
+}
+
+func TestEmbedBatch_PrefixesDocumentsForNomic(t *testing.T) {
+	var gotBody map[string]any
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatalf("decoding request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"embeddings": [][]float32{{0.1}, {0.2}},
+		})
+	})
+
+	chunks := []embedding.Chunk{
+		{ID: "a", Text: "first"},
+		{ID: "b", Text: "second"},
+	}
+	if _, err := client.EmbedBatch(context.Background(), chunks); err != nil {
+		t.Fatalf("EmbedBatch: %v", err)
+	}
+
+	input, ok := gotBody["input"].([]any)
+	want := []string{"search_document: first", "search_document: second"}
+	if !ok || len(input) != len(want) {
+		t.Fatalf("expected input %v, got %v", want, gotBody["input"])
+	}
+	for i, w := range want {
+		if input[i] != w {
+			t.Fatalf("index %d: expected %q, got %v", i, w, input[i])
+		}
+	}
+}
+
+func TestEmbed_DoesNotPrefixNonNomicModels(t *testing.T) {
+	var gotBody map[string]any
+	client := newTestClientWithModel(t, "mxbai-embed-large", func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatalf("decoding request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"embeddings": [][]float32{{0.1}},
+		})
+	})
+
+	if _, err := client.Embed(context.Background(), "hello world"); err != nil {
+		t.Fatalf("Embed: %v", err)
+	}
+
+	input, ok := gotBody["input"].([]any)
 	if !ok || len(input) != 1 || input[0] != "hello world" {
-		t.Fatalf("expected input [%q], got %v", "hello world", gotBody["input"])
+		t.Fatalf("expected unprefixed input [%q], got %v", "hello world", gotBody["input"])
+	}
+}
+
+func TestEmbedBatch_DoesNotPrefixNonNomicModels(t *testing.T) {
+	var gotBody map[string]any
+	client := newTestClientWithModel(t, "mxbai-embed-large", func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatalf("decoding request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"embeddings": [][]float32{{0.1}, {0.2}},
+		})
+	})
+
+	chunks := []embedding.Chunk{
+		{ID: "a", Text: "first"},
+		{ID: "b", Text: "second"},
+	}
+	if _, err := client.EmbedBatch(context.Background(), chunks); err != nil {
+		t.Fatalf("EmbedBatch: %v", err)
+	}
+
+	input, ok := gotBody["input"].([]any)
+	want := []string{"first", "second"}
+	if !ok || len(input) != len(want) {
+		t.Fatalf("expected unprefixed input %v, got %v", want, gotBody["input"])
+	}
+	for i, w := range want {
+		if input[i] != w {
+			t.Fatalf("index %d: expected unprefixed %q, got %v", i, w, input[i])
+		}
 	}
 }
 
