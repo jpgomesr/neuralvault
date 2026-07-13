@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"mime"
 	"net/http"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -399,11 +401,39 @@ func (h *Handler) GetFileContent(w http.ResponseWriter, r *http.Request) {
 	if contentType == "" {
 		contentType = "application/octet-stream"
 	}
+	// Serve user-uploaded content so it can't execute on the app origin. The API
+	// is proxied under the same origin as the web app (web/next.config.mjs), so a
+	// file rendered as text/html or image/svg+xml would run script in the app's
+	// security context. nosniff pins the declared type; only known-safe types the
+	// frontend embeds by URL (non-SVG images, PDF) are served inline, everything
+	// else as an attachment so opening the raw URL downloads instead of rendering.
+	disposition := "attachment"
+	if isInlineSafe(contentType) {
+		disposition = "inline"
+	}
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Content-Type", contentType)
-	w.Header().Set("Content-Disposition", fmt.Sprintf("inline; filename=%q", filepath.Base(relPath)))
+	w.Header().Set("Content-Disposition", fmt.Sprintf("%s; filename=%q", disposition, filepath.Base(relPath)))
 	if _, err := io.Copy(w, rc); err != nil {
 		slog.ErrorContext(r.Context(), "streaming file content failed", "err", err, "source_id", sourceID, "path", relPath, "request_id", logger.RequestID(r.Context()))
 	}
+}
+
+// isInlineSafe reports whether a content type can be served with
+// Content-Disposition: inline without risking script execution on the app
+// origin. Only non-SVG images and PDFs qualify — these are the types the
+// frontend embeds directly by URL (<img>, <iframe>). Everything else (HTML,
+// SVG, XML, text, unknown) is served as an attachment so opening the raw URL
+// downloads instead of rendering. Parse failures are treated as unsafe.
+func isInlineSafe(contentType string) bool {
+	mediaType, _, err := mime.ParseMediaType(contentType)
+	if err != nil {
+		return false
+	}
+	if mediaType == "application/pdf" {
+		return true
+	}
+	return strings.HasPrefix(mediaType, "image/") && mediaType != "image/svg+xml"
 }
 
 // StreamStatus godoc
