@@ -7,6 +7,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/jpgomesr/NeuralVault/internal/auth"
+	"github.com/jpgomesr/NeuralVault/internal/httperr"
 	"github.com/jpgomesr/NeuralVault/internal/logger"
 )
 
@@ -24,8 +25,7 @@ func EnsureMember(w http.ResponseWriter, r *http.Request, svc Service, workspace
 
 	member, err := svc.IsMember(r.Context(), userID, workspaceID)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "membership check failed", "err", err, "user_id", userID, "workspace_id", workspaceID, "request_id", logger.RequestID(r.Context()))
-		http.Error(w, "failed to verify workspace access", http.StatusInternalServerError)
+		httperr.Internal(w, r, "membership check failed", err, "user_id", userID, "workspace_id", workspaceID)
 		return false
 	}
 	if !member {

@@ -9,6 +9,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/jpgomesr/NeuralVault/internal/httperr"
 	"github.com/jpgomesr/NeuralVault/internal/logger"
 	"github.com/jpgomesr/NeuralVault/internal/model"
 	"github.com/jpgomesr/NeuralVault/internal/workspaces"
@@ -63,8 +64,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 
 	conv, err := h.service.Create(r.Context(), req.WorkspaceID)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "create conversation failed", "err", err, "workspace_id", req.WorkspaceID, "request_id", logger.RequestID(r.Context()))
-		http.Error(w, "failed to create conversation: "+err.Error(), http.StatusInternalServerError)
+		httperr.Internal(w, r, "create conversation failed", err, "workspace_id", req.WorkspaceID)
 		return
 	}
 
@@ -100,8 +100,7 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 
 	list, err := h.service.List(r.Context(), workspaceID)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "list conversations failed", "err", err, "workspace_id", workspaceID, "request_id", logger.RequestID(r.Context()))
-		http.Error(w, "failed to list conversations: "+err.Error(), http.StatusInternalServerError)
+		httperr.Internal(w, r, "list conversations failed", err, "workspace_id", workspaceID)
 		return
 	}
 	if list == nil {
@@ -140,8 +139,7 @@ func (h *Handler) ListMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		slog.ErrorContext(r.Context(), "list messages failed", "err", err, "conversation_id", conversationID, "request_id", logger.RequestID(r.Context()))
-		http.Error(w, "failed to load conversation: "+err.Error(), http.StatusInternalServerError)
+		httperr.Internal(w, r, "list messages failed", err, "conversation_id", conversationID)
 		return
 	}
 
@@ -151,8 +149,7 @@ func (h *Handler) ListMessages(w http.ResponseWriter, r *http.Request) {
 
 	msgs, err := h.service.ListMessages(r.Context(), conversationID)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "list messages failed", "err", err, "conversation_id", conversationID, "request_id", logger.RequestID(r.Context()))
-		http.Error(w, "failed to list messages: "+err.Error(), http.StatusInternalServerError)
+		httperr.Internal(w, r, "list messages failed", err, "conversation_id", conversationID)
 		return
 	}
 	if msgs == nil {

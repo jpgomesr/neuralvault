@@ -14,6 +14,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jpgomesr/NeuralVault/internal/httperr"
 	"github.com/jpgomesr/NeuralVault/internal/logger"
 	"github.com/jpgomesr/NeuralVault/internal/model"
 	"github.com/jpgomesr/NeuralVault/internal/workspaces"
@@ -115,8 +116,7 @@ func (h *Handler) CreateSource(w http.ResponseWriter, r *http.Request) {
 		Name:        name,
 	}, uploads)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "create source failed", "err", err, "workspace_id", workspaceID, "request_id", logger.RequestID(r.Context()))
-		http.Error(w, "failed to create source: "+err.Error(), http.StatusInternalServerError)
+		httperr.Internal(w, r, "create source failed", err, "workspace_id", workspaceID)
 		return
 	}
 
@@ -155,8 +155,7 @@ func (h *Handler) ListSources(w http.ResponseWriter, r *http.Request) {
 
 	sources, err := h.service.List(r.Context(), workspaceID)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "list sources failed", "err", err, "workspace_id", workspaceID, "request_id", logger.RequestID(r.Context()))
-		http.Error(w, "failed to list sources: "+err.Error(), http.StatusInternalServerError)
+		httperr.Internal(w, r, "list sources failed", err, "workspace_id", workspaceID)
 		return
 	}
 
@@ -191,8 +190,7 @@ func (h *Handler) IngestSource(w http.ResponseWriter, r *http.Request) {
 
 	source, err := h.service.GetByID(r.Context(), sourceID)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "ingest source failed", "err", err, "source_id", sourceID, "request_id", logger.RequestID(r.Context()))
-		http.Error(w, "failed to load source: "+err.Error(), http.StatusInternalServerError)
+		httperr.Internal(w, r, "ingest source failed", err, "source_id", sourceID)
 		return
 	}
 
@@ -206,8 +204,7 @@ func (h *Handler) IngestSource(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "source is already indexing", http.StatusConflict)
 			return
 		}
-		slog.ErrorContext(r.Context(), "ingest source failed", "err", err, "source_id", sourceID, "request_id", logger.RequestID(r.Context()))
-		http.Error(w, "failed to start ingest: "+err.Error(), http.StatusInternalServerError)
+		httperr.Internal(w, r, "ingest source failed", err, "source_id", sourceID)
 		return
 	}
 
@@ -244,8 +241,7 @@ func (h *Handler) DeleteSource(w http.ResponseWriter, r *http.Request) {
 
 	source, err := h.service.GetByID(r.Context(), sourceID)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "delete source failed", "err", err, "source_id", sourceID, "request_id", logger.RequestID(r.Context()))
-		http.Error(w, "failed to load source: "+err.Error(), http.StatusInternalServerError)
+		httperr.Internal(w, r, "delete source failed", err, "source_id", sourceID)
 		return
 	}
 
@@ -254,8 +250,7 @@ func (h *Handler) DeleteSource(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.service.Delete(r.Context(), sourceID); err != nil {
-		slog.ErrorContext(r.Context(), "delete source failed", "err", err, "source_id", sourceID, "request_id", logger.RequestID(r.Context()))
-		http.Error(w, "failed to delete source: "+err.Error(), http.StatusInternalServerError)
+		httperr.Internal(w, r, "delete source failed", err, "source_id", sourceID)
 		return
 	}
 
@@ -285,8 +280,7 @@ func (h *Handler) ListChunks(w http.ResponseWriter, r *http.Request) {
 
 	source, err := h.service.GetByID(r.Context(), sourceID)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "list chunks failed", "err", err, "source_id", sourceID, "request_id", logger.RequestID(r.Context()))
-		http.Error(w, "failed to load source: "+err.Error(), http.StatusInternalServerError)
+		httperr.Internal(w, r, "list chunks failed", err, "source_id", sourceID)
 		return
 	}
 
@@ -296,8 +290,7 @@ func (h *Handler) ListChunks(w http.ResponseWriter, r *http.Request) {
 
 	chunks, err := h.service.ListChunks(r.Context(), sourceID)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "list chunks failed", "err", err, "source_id", sourceID, "request_id", logger.RequestID(r.Context()))
-		http.Error(w, "failed to list chunks: "+err.Error(), http.StatusInternalServerError)
+		httperr.Internal(w, r, "list chunks failed", err, "source_id", sourceID)
 		return
 	}
 
@@ -328,8 +321,7 @@ func (h *Handler) ListFiles(w http.ResponseWriter, r *http.Request) {
 
 	source, err := h.service.GetByID(r.Context(), sourceID)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "list files failed", "err", err, "source_id", sourceID, "request_id", logger.RequestID(r.Context()))
-		http.Error(w, "failed to load source: "+err.Error(), http.StatusInternalServerError)
+		httperr.Internal(w, r, "list files failed", err, "source_id", sourceID)
 		return
 	}
 
@@ -339,8 +331,7 @@ func (h *Handler) ListFiles(w http.ResponseWriter, r *http.Request) {
 
 	files, err := h.service.ListFiles(r.Context(), sourceID)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "list files failed", "err", err, "source_id", sourceID, "request_id", logger.RequestID(r.Context()))
-		http.Error(w, "failed to list files: "+err.Error(), http.StatusInternalServerError)
+		httperr.Internal(w, r, "list files failed", err, "source_id", sourceID)
 		return
 	}
 	if files == nil {
@@ -381,8 +372,7 @@ func (h *Handler) GetFileContent(w http.ResponseWriter, r *http.Request) {
 
 	source, err := h.service.GetByID(r.Context(), sourceID)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "file content failed", "err", err, "source_id", sourceID, "request_id", logger.RequestID(r.Context()))
-		http.Error(w, "failed to load source: "+err.Error(), http.StatusInternalServerError)
+		httperr.Internal(w, r, "file content failed", err, "source_id", sourceID)
 		return
 	}
 
@@ -465,8 +455,7 @@ func (h *Handler) StreamStatus(w http.ResponseWriter, r *http.Request) {
 
 	source, err := h.service.GetByID(r.Context(), sourceID)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "stream status failed", "err", err, "source_id", sourceID, "request_id", logger.RequestID(r.Context()))
-		http.Error(w, "failed to load source: "+err.Error(), http.StatusInternalServerError)
+		httperr.Internal(w, r, "stream status failed", err, "source_id", sourceID)
 		return
 	}
 
@@ -476,7 +465,7 @@ func (h *Handler) StreamStatus(w http.ResponseWriter, r *http.Request) {
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
-		http.Error(w, "streaming not supported by this server", http.StatusInternalServerError)
+		httperr.Internal(w, r, "stream status failed", errors.New("response writer does not support flushing"), "source_id", sourceID)
 		return
 	}
 
