@@ -223,6 +223,19 @@ func (p sourceRowDeleteFailingPool) Exec(ctx context.Context, sql string, args .
 	return p.Pool.Exec(ctx, sql, args...)
 }
 
+// contentUpdateFailingPool fails the Exec used by updateChunkContent to append
+// a caption (identified by "SET content = $1"), so the caption-persist error
+// path can be exercised. Chunk INSERTs (run via the chunker's own sharedPool)
+// and the embedding_model update are unaffected.
+type contentUpdateFailingPool struct{ storage.Pool }
+
+func (p contentUpdateFailingPool) Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
+	if strings.Contains(sql, "SET content = $1") {
+		return pgconn.CommandTag{}, fmt.Errorf("injected content update failure")
+	}
+	return p.Pool.Exec(ctx, sql, args...)
+}
+
 // errReader always fails on Read, used to exercise copy-error branches.
 type errReader struct{}
 
@@ -1568,6 +1581,62 @@ func TestRunPipeline_CaptioningFailureDoesNotFailIngest(t *testing.T) {
 	}
 	if chunks[0].Content != "# Diagram\n\n```\nBrowser -> API\n```" {
 		t.Errorf("expected uncaptioned original content preserved on caption failure, got: %q", chunks[0].Content)
+	}
+}
+
+// TestRunPipeline_CaptionSkippedWhenEmpty covers the branch where the LLM is
+// called for a structured chunk but returns an empty (whitespace-only)
+// caption: generateCaption runs, but nothing is appended or persisted.
+func TestRunPipeline_CaptionSkippedWhenEmpty(t *testing.T) {
+	ctx := context.Background()
+	wid := insertWS(ctx, t)
+	dir := makeTempDirWithFile(t, "doc.md", "# Diagram\n\n```\nBrowser -> API\n```")
+	src := insertSrcRow(ctx, t, wid, dir)
+
+	prov := &stubProvider{completion: "   \n  "} // trims to empty
+	svc := buildCustomSvcWithProvider(ctx, t, sharedPool, &stubEmbedder{dim: 768}, stubVectorStore{}, prov)
+	if _, err := svc.runPipeline(ctx, src); err != nil {
+		t.Fatalf("runPipeline: %v", err)
+	}
+	if prov.calls != 1 {
+		t.Fatalf("expected the LLM to be called once for the structured chunk, got %d", prov.calls)
+	}
+
+	chunks, err := svc.ListChunks(ctx, src.ID)
+	if err != nil {
+		t.Fatalf("ListChunks: %v", err)
+	}
+	if chunks[0].Content != "# Diagram\n\n```\nBrowser -> API\n```" {
+		t.Errorf("expected original content unchanged when caption is empty, got: %q", chunks[0].Content)
+	}
+}
+
+// TestRunPipeline_CaptionPersistFailureDoesNotFailIngest covers the branch
+// where captioning succeeds but persisting the appended caption fails: the
+// failure is logged and skipped, and ingest still completes with the original
+// (uncaptioned) content.
+func TestRunPipeline_CaptionPersistFailureDoesNotFailIngest(t *testing.T) {
+	ctx := context.Background()
+	wid := insertWS(ctx, t)
+	dir := makeTempDirWithFile(t, "doc.md", "# Diagram\n\n```\nBrowser -> API\n```")
+	src := insertSrcRow(ctx, t, wid, dir)
+
+	prov := &stubProvider{completion: "A diagram of the browser calling the API."}
+	svc := buildCustomSvcWithProvider(ctx, t, contentUpdateFailingPool{Pool: sharedPool}, &stubEmbedder{dim: 768}, stubVectorStore{}, prov)
+	total, err := svc.runPipeline(ctx, src)
+	if err != nil {
+		t.Fatalf("expected runPipeline to succeed despite caption-persist failure, got: %v", err)
+	}
+	if total != 1 {
+		t.Errorf("expected 1 chunk still created, got %d", total)
+	}
+
+	chunks, err := svc.ListChunks(ctx, src.ID)
+	if err != nil {
+		t.Fatalf("ListChunks: %v", err)
+	}
+	if chunks[0].Content != "# Diagram\n\n```\nBrowser -> API\n```" {
+		t.Errorf("expected uncaptioned original content preserved on persist failure, got: %q", chunks[0].Content)
 	}
 }
 
