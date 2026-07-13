@@ -83,6 +83,22 @@ func TestNew_InfoEndpointNon200(t *testing.T) {
 	}
 }
 
+func TestNew_InfoDecodeError(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/info", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte("not json"))
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	cfg := &config.Config{Reranker: config.Reranker{URL: srv.URL, Model: "BAAI/bge-reranker-base"}}
+	_, err := tei.New(context.Background(), cfg)
+	if err == nil || !strings.Contains(err.Error(), "decoding reranker info") {
+		t.Fatalf("expected info decode error, got: %v", err)
+	}
+}
+
 func TestRerank_Success(t *testing.T) {
 	var gotBody map[string]any
 	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
@@ -165,6 +181,71 @@ func TestRerank_IndexOutOfRange(t *testing.T) {
 	_, err := client.Rerank(context.Background(), "query", []types.Candidate{{ID: "a", Text: "x"}})
 	if err == nil || !strings.Contains(err.Error(), "out of range") {
 		t.Fatalf("expected out of range error, got: %v", err)
+	}
+}
+
+func TestRerank_NonOKStatusNoErrorBody(t *testing.T) {
+	// A non-200 with no decodable {"error": ...} body falls back to the generic
+	// "unexpected status" message rather than surfacing an empty error string.
+	client := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+	})
+
+	_, err := client.Rerank(context.Background(), "query", []types.Candidate{{ID: "a", Text: "x"}})
+	if err == nil || !strings.Contains(err.Error(), "unexpected status") {
+		t.Fatalf("expected unexpected status error, got: %v", err)
+	}
+}
+
+func TestRerank_DecodeError(t *testing.T) {
+	client := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte("not json"))
+	})
+
+	_, err := client.Rerank(context.Background(), "query", []types.Candidate{{ID: "a", Text: "x"}})
+	if err == nil || !strings.Contains(err.Error(), "decoding rerank response") {
+		t.Fatalf("expected decode error, got: %v", err)
+	}
+}
+
+func TestRerank_RequestError(t *testing.T) {
+	// Build a client against a server, then close it so the /rerank round-trip
+	// fails at the transport level (before any status code is seen).
+	mux := http.NewServeMux()
+	mux.HandleFunc("/info", validInfoHandler)
+	srv := httptest.NewServer(mux)
+
+	cfg := &config.Config{Reranker: config.Reranker{URL: srv.URL, Model: "BAAI/bge-reranker-base"}}
+	client, err := tei.New(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("tei.New: %v", err)
+	}
+	srv.Close() // now unreachable, /info having already succeeded during New
+
+	_, err = client.Rerank(context.Background(), "query", []types.Candidate{{ID: "a", Text: "x"}})
+	if err == nil || !strings.Contains(err.Error(), "calling reranker") {
+		t.Fatalf("expected calling reranker error, got: %v", err)
+	}
+}
+
+func TestHealthCheck_Non200(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/info", validInfoHandler)
+	mux.HandleFunc("/health", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	cfg := &config.Config{Reranker: config.Reranker{URL: srv.URL, Model: "BAAI/bge-reranker-base"}}
+	client, err := tei.New(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("tei.New: %v", err)
+	}
+
+	if err := client.HealthCheck(context.Background()); err == nil || !strings.Contains(err.Error(), "unexpected status") {
+		t.Fatalf("expected unexpected status error, got: %v", err)
 	}
 }
 
