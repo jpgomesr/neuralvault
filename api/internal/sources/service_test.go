@@ -878,6 +878,15 @@ func TestServiceGetByID(t *testing.T) {
 	if got.Name != "fetchable" {
 		t.Errorf("name mismatch: want fetchable, got %s", got.Name)
 	}
+	// Regression (#63): a file source must not persist the ephemeral temp-dir
+	// root path — it is deleted after indexing and would leak a dangling
+	// server-local path through the API. Metadata is expected to be empty/NULL.
+	if n := len(got.Metadata); n != 0 && string(got.Metadata) != "null" {
+		t.Errorf("expected empty persisted metadata, got %q", string(got.Metadata))
+	}
+	if strings.Contains(string(got.Metadata), "root_path") {
+		t.Errorf("persisted metadata leaks root_path: %q", string(got.Metadata))
+	}
 }
 
 func TestServiceGetByID_NotFound(t *testing.T) {
@@ -1073,7 +1082,7 @@ func TestResetStuckIndexing(t *testing.T) {
 func TestServiceIngest_ClaimError(t *testing.T) {
 	ctx := context.Background()
 	wid := insertWS(ctx, t)
-	src := insertSrcRow(ctx, t, wid, t.TempDir())
+	src := insertSrcRow(ctx, t, wid)
 	svc := buildCustomSvc(ctx, t, claimFailingPool{Pool: sharedPool}, &stubEmbedder{dim: 768}, stubVectorStore{})
 
 	err := svc.Ingest(ctx, src.ID)
@@ -1130,9 +1139,10 @@ func buildCustomSvcWithProvider(_ context.Context, t *testing.T, pool storage.Po
 // insertSrcRow inserts a source row directly (bypassing the service) so that
 // chunk FK constraints are satisfied when calling runPipeline. A cleanup
 // deletes chunks and source on test exit.
-func insertSrcRow(ctx context.Context, t *testing.T, wid uuid.UUID, tempDir string) model.Source {
+func insertSrcRow(ctx context.Context, t *testing.T, wid uuid.UUID) model.Source {
 	t.Helper()
-	meta, _ := json.Marshal(model.FileSourceMetadata{RootPath: tempDir})
+	// File sources persist no metadata; the walk root is passed to runPipeline
+	// explicitly by the caller.
 	src := model.Source{
 		ID:          uuid.New(),
 		WorkspaceID: wid,
@@ -1140,7 +1150,6 @@ func insertSrcRow(ctx context.Context, t *testing.T, wid uuid.UUID, tempDir stri
 		Type:        model.SourceTypeFile,
 		URI:         fmt.Sprintf("%s/%s/", wid, uuid.New()),
 		Status:      model.SourceStatusIndexing,
-		Metadata:    json.RawMessage(meta),
 		CreatedAt:   time.Now(),
 		UpdatedAt:   time.Now(),
 	}
@@ -1451,16 +1460,14 @@ func TestRunPipeline_EmptyFile(t *testing.T) {
 	ctx := context.Background()
 	dir := makeTempDirWithFile(t, "empty.txt", "")
 
-	meta, _ := json.Marshal(model.FileSourceMetadata{RootPath: dir})
 	src := model.Source{
 		ID:          uuid.New(),
 		WorkspaceID: uuid.New(), // no DB record needed — 0 chunks means no FK check
 		Type:        model.SourceTypeFile,
-		Metadata:    json.RawMessage(meta),
 	}
 
 	svc := buildCustomSvc(ctx, t, sharedPool, &stubEmbedder{dim: 768}, stubVectorStore{})
-	total, err := svc.runPipeline(ctx, src)
+	total, err := svc.runPipeline(ctx, src, dir)
 	if err != nil {
 		t.Fatalf("runPipeline with empty file: %v", err)
 	}
@@ -1473,10 +1480,10 @@ func TestRunPipeline_EmbedBatchError(t *testing.T) {
 	ctx := context.Background()
 	wid := insertWS(ctx, t)
 	dir := makeTempDirWithFile(t, "doc.md", "# Section\nSome content here.")
-	src := insertSrcRow(ctx, t, wid, dir)
+	src := insertSrcRow(ctx, t, wid)
 
 	svc := buildCustomSvc(ctx, t, sharedPool, failingEmbedder{}, stubVectorStore{})
-	_, err := svc.runPipeline(ctx, src)
+	_, err := svc.runPipeline(ctx, src, dir)
 	if err == nil || !strings.Contains(err.Error(), "embedding chunks from") {
 		t.Fatalf("expected embed batch error, got: %v", err)
 	}
@@ -1486,10 +1493,10 @@ func TestRunPipeline_UpsertError(t *testing.T) {
 	ctx := context.Background()
 	wid := insertWS(ctx, t)
 	dir := makeTempDirWithFile(t, "doc.md", "# Section\nSome content here.")
-	src := insertSrcRow(ctx, t, wid, dir)
+	src := insertSrcRow(ctx, t, wid)
 
 	svc := buildCustomSvc(ctx, t, sharedPool, &stubEmbedder{dim: 768}, errorVectorStore{})
-	_, err := svc.runPipeline(ctx, src)
+	_, err := svc.runPipeline(ctx, src, dir)
 	if err == nil || !strings.Contains(err.Error(), "upserting vectors for") {
 		t.Fatalf("expected upsert error, got: %v", err)
 	}
@@ -1499,13 +1506,13 @@ func TestRunPipeline_UpdateEmbeddingModelError(t *testing.T) {
 	ctx := context.Background()
 	wid := insertWS(ctx, t)
 	dir := makeTempDirWithFile(t, "doc.md", "# Section\nSome content here.")
-	src := insertSrcRow(ctx, t, wid, dir)
+	src := insertSrcRow(ctx, t, wid)
 
 	// selectiveFailingPool intercepts only "UPDATE chunks SET embedding_model".
 	// The chunker uses sharedPool directly (captured at construction time)
 	// so chunk INSERTs continue to succeed.
 	svc := buildCustomSvc(ctx, t, selectiveFailingPool{Pool: sharedPool}, &stubEmbedder{dim: 768}, stubVectorStore{})
-	_, err := svc.runPipeline(ctx, src)
+	_, err := svc.runPipeline(ctx, src, dir)
 	if err == nil || !strings.Contains(err.Error(), "updating embedding model for") {
 		t.Fatalf("expected updateEmbeddingModel error, got: %v", err)
 	}
@@ -1517,11 +1524,11 @@ func TestRunPipeline_CaptionsStructuredChunks(t *testing.T) {
 	ctx := context.Background()
 	wid := insertWS(ctx, t)
 	dir := makeTempDirWithFile(t, "doc.md", "# Diagram\n\n```\nBrowser -> API -> Database\n```")
-	src := insertSrcRow(ctx, t, wid, dir)
+	src := insertSrcRow(ctx, t, wid)
 
 	prov := &stubProvider{completion: "This diagram shows the browser connecting to the API, which connects to the database."}
 	svc := buildCustomSvcWithProvider(ctx, t, sharedPool, &stubEmbedder{dim: 768}, stubVectorStore{}, prov)
-	if _, err := svc.runPipeline(ctx, src); err != nil {
+	if _, err := svc.runPipeline(ctx, src, dir); err != nil {
 		t.Fatalf("runPipeline: %v", err)
 	}
 	if prov.calls != 1 {
@@ -1547,11 +1554,11 @@ func TestRunPipeline_SkipsCaptioningForPlainProse(t *testing.T) {
 	ctx := context.Background()
 	wid := insertWS(ctx, t)
 	dir := makeTempDirWithFile(t, "doc.md", "# Section\nJust some plain prose, no diagram or table here.")
-	src := insertSrcRow(ctx, t, wid, dir)
+	src := insertSrcRow(ctx, t, wid)
 
 	prov := &stubProvider{completion: "should never be used"}
 	svc := buildCustomSvcWithProvider(ctx, t, sharedPool, &stubEmbedder{dim: 768}, stubVectorStore{}, prov)
-	if _, err := svc.runPipeline(ctx, src); err != nil {
+	if _, err := svc.runPipeline(ctx, src, dir); err != nil {
 		t.Fatalf("runPipeline: %v", err)
 	}
 	if prov.calls != 0 {
@@ -1563,11 +1570,11 @@ func TestRunPipeline_CaptioningFailureDoesNotFailIngest(t *testing.T) {
 	ctx := context.Background()
 	wid := insertWS(ctx, t)
 	dir := makeTempDirWithFile(t, "doc.md", "# Diagram\n\n```\nBrowser -> API\n```")
-	src := insertSrcRow(ctx, t, wid, dir)
+	src := insertSrcRow(ctx, t, wid)
 
 	prov := &stubProvider{err: errors.New("llm unavailable")}
 	svc := buildCustomSvcWithProvider(ctx, t, sharedPool, &stubEmbedder{dim: 768}, stubVectorStore{}, prov)
-	total, err := svc.runPipeline(ctx, src)
+	total, err := svc.runPipeline(ctx, src, dir)
 	if err != nil {
 		t.Fatalf("expected runPipeline to succeed despite captioning failure, got: %v", err)
 	}
@@ -1591,11 +1598,11 @@ func TestRunPipeline_CaptionSkippedWhenEmpty(t *testing.T) {
 	ctx := context.Background()
 	wid := insertWS(ctx, t)
 	dir := makeTempDirWithFile(t, "doc.md", "# Diagram\n\n```\nBrowser -> API\n```")
-	src := insertSrcRow(ctx, t, wid, dir)
+	src := insertSrcRow(ctx, t, wid)
 
 	prov := &stubProvider{completion: "   \n  "} // trims to empty
 	svc := buildCustomSvcWithProvider(ctx, t, sharedPool, &stubEmbedder{dim: 768}, stubVectorStore{}, prov)
-	if _, err := svc.runPipeline(ctx, src); err != nil {
+	if _, err := svc.runPipeline(ctx, src, dir); err != nil {
 		t.Fatalf("runPipeline: %v", err)
 	}
 	if prov.calls != 1 {
@@ -1619,11 +1626,11 @@ func TestRunPipeline_CaptionPersistFailureDoesNotFailIngest(t *testing.T) {
 	ctx := context.Background()
 	wid := insertWS(ctx, t)
 	dir := makeTempDirWithFile(t, "doc.md", "# Diagram\n\n```\nBrowser -> API\n```")
-	src := insertSrcRow(ctx, t, wid, dir)
+	src := insertSrcRow(ctx, t, wid)
 
 	prov := &stubProvider{completion: "A diagram of the browser calling the API."}
 	svc := buildCustomSvcWithProvider(ctx, t, contentUpdateFailingPool{Pool: sharedPool}, &stubEmbedder{dim: 768}, stubVectorStore{}, prov)
-	total, err := svc.runPipeline(ctx, src)
+	total, err := svc.runPipeline(ctx, src, dir)
 	if err != nil {
 		t.Fatalf("expected runPipeline to succeed despite caption-persist failure, got: %v", err)
 	}

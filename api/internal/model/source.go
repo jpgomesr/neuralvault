@@ -29,11 +29,6 @@ type GitSourceMetadata struct {
 	Branch string `json:"branch"`
 }
 
-// FileSourceMetadata holds provider-specific config for file sources (PDFs, Obsidian vaults, directories).
-type FileSourceMetadata struct {
-	RootPath string `json:"root_path"`
-}
-
 // WebSourceMetadata holds provider-specific config for web sources.
 type WebSourceMetadata struct {
 	CrawlDepth   int      `json:"crawl_depth"`

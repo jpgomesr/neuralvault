@@ -2,7 +2,6 @@ package sourcereader
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io/fs"
 	"log/slog"
@@ -21,22 +20,16 @@ func NewFileReader() *FileReader {
 	return &FileReader{}
 }
 
-// Read implements Reader. It decodes FileSourceMetadata from source.Metadata,
-// validates the root path, and walks the directory tree producing one
-// ChunkRequest per supported file (.md, .txt).
-func (r *FileReader) Read(ctx context.Context, source model.Source) ([]chunking.ChunkRequest, error) {
-	var meta model.FileSourceMetadata
-	if err := json.Unmarshal(source.Metadata, &meta); err != nil {
-		return nil, fmt.Errorf("decoding file source metadata: %w", err)
-	}
-
-	if _, err := os.Stat(meta.RootPath); err != nil {
-		return nil, fmt.Errorf("root path %q: %w", meta.RootPath, err)
+// Read implements Reader. It validates rootPath and walks the directory tree
+// producing one ChunkRequest per supported file (.md, .txt).
+func (r *FileReader) Read(ctx context.Context, source model.Source, rootPath string) ([]chunking.ChunkRequest, error) {
+	if _, err := os.Stat(rootPath); err != nil {
+		return nil, fmt.Errorf("root path %q: %w", rootPath, err)
 	}
 
 	var requests []chunking.ChunkRequest
 
-	err := filepath.WalkDir(meta.RootPath, func(path string, d fs.DirEntry, err error) error {
+	err := filepath.WalkDir(rootPath, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return fmt.Errorf("accessing %q: %w", path, err)
 		}
@@ -64,12 +57,12 @@ func (r *FileReader) Read(ctx context.Context, source model.Source) ([]chunking.
 			return fmt.Errorf("reading %q: %w", path, err)
 		}
 
-		// Store the path relative to RootPath so chunk metadata carries the
+		// Store the path relative to rootPath so chunk metadata carries the
 		// same stable identifier as source_files.name, rather than the
 		// ephemeral absolute temp-dir path (which changes every re-ingest).
-		rel, err := filepath.Rel(meta.RootPath, path)
+		rel, err := filepath.Rel(rootPath, path)
 		if err != nil || rel == "." {
-			// RootPath is the file itself (single-file root) or an unexpected
+			// rootPath is the file itself (single-file root) or an unexpected
 			// mismatch: fall back to the base name.
 			rel = filepath.Base(path)
 		}
