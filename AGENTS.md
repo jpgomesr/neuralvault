@@ -11,10 +11,20 @@ Open-source AI memory platform: indexes knowledge sources (Obsidian, Git, PDFs),
 ### Infrastructure (required before running the API or frontend locally)
 
 ```bash
-docker compose up -d qdrant postgres ollama minio
+docker compose up -d qdrant postgres ollama minio reranker
 ollama pull nomic-embed-text
 ollama pull llama3
 ```
+
+The `reranker` container (Hugging Face Text Embeddings Inference) downloads its own
+model on first start — no manual pull step, unlike Ollama.
+
+`ollama` is CPU-only by default (works on any machine). `docker-compose.gpu.yml` is
+an optional overlay adding NVIDIA GPU passthrough — layer it on top (`docker compose
+-f docker-compose.yml -f docker-compose.gpu.yml up -d`, or `make up-gpu`) only on
+hosts with the NVIDIA Container Toolkit installed; do not merge its device
+reservation into the base `docker-compose.yml`, since that breaks `docker compose up`
+on any machine without an NVIDIA GPU.
 
 ### Backend (Go API)
 
