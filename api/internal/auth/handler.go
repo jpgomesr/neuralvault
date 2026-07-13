@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/jpgomesr/NeuralVault/internal/httperr"
 	"github.com/jpgomesr/NeuralVault/internal/logger"
 	"github.com/jpgomesr/NeuralVault/internal/model"
 )
@@ -66,8 +67,7 @@ func NewHandler(service Service, secret string, cookieSecure bool, postLoginURL 
 func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	state, err := randomState()
 	if err != nil {
-		slog.ErrorContext(r.Context(), "generating oauth state failed", "err", err, "request_id", logger.RequestID(r.Context()))
-		http.Error(w, "failed to start login", http.StatusInternalServerError)
+		httperr.Internal(w, r, "generating oauth state failed", err)
 		return
 	}
 
@@ -123,8 +123,7 @@ func (h *Handler) Callback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.issueSession(w, user); err != nil {
-		slog.ErrorContext(r.Context(), "issuing session failed", "err", err, "user_id", user.ID, "request_id", logger.RequestID(r.Context()))
-		http.Error(w, "authentication failed", http.StatusInternalServerError)
+		httperr.Internal(w, r, "issuing session failed", err, "user_id", user.ID)
 		return
 	}
 
@@ -169,14 +168,12 @@ func (h *Handler) Token(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "invalid email or password", http.StatusUnauthorized)
 			return
 		}
-		slog.ErrorContext(r.Context(), "password login failed", "err", err, "request_id", logger.RequestID(r.Context()))
-		http.Error(w, "authentication failed", http.StatusInternalServerError)
+		httperr.Internal(w, r, "password login failed", err)
 		return
 	}
 
 	if err := h.issueSession(w, user); err != nil {
-		slog.ErrorContext(r.Context(), "issuing session failed", "err", err, "user_id", user.ID, "request_id", logger.RequestID(r.Context()))
-		http.Error(w, "authentication failed", http.StatusInternalServerError)
+		httperr.Internal(w, r, "issuing session failed", err, "user_id", user.ID)
 		return
 	}
 

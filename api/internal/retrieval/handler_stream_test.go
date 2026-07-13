@@ -66,8 +66,11 @@ func TestQueryStream_AnswerError(t *testing.T) {
 		t.Fatalf("expected 200 (headers already sent), got %d", w.Code)
 	}
 	out := w.Body.String()
-	if !strings.Contains(out, "event: error") || !strings.Contains(out, "boom") {
+	if !strings.Contains(out, "event: error") {
 		t.Fatalf("expected an error event in the stream, got:\n%s", out)
+	}
+	if strings.Contains(out, "boom") {
+		t.Fatalf("error event leaked internal error detail:\n%s", out)
 	}
 }
 
@@ -175,8 +178,11 @@ func TestQueryStream_EmitsErrorEvent(t *testing.T) {
 		t.Fatalf("expected 200 (headers already sent), got %d", w.Code)
 	}
 	out := w.Body.String()
-	if !strings.Contains(out, "event: error") || !strings.Contains(out, "model exploded") {
+	if !strings.Contains(out, "event: error") {
 		t.Fatalf("expected an error event in the stream, got:\n%s", out)
+	}
+	if strings.Contains(out, "model exploded") {
+		t.Fatalf("error event leaked internal error detail:\n%s", out)
 	}
 }
 
@@ -258,8 +264,11 @@ func TestQueryStream_PersistQuestionError(t *testing.T) {
 		t.Fatalf("expected SSE headers to already be written, got Content-Type %q", ct)
 	}
 	out := w.Body.String()
-	if !strings.Contains(out, "event: error") || !strings.Contains(out, "insert failed") {
+	if !strings.Contains(out, "event: error") {
 		t.Fatalf("expected an error event in the stream, got:\n%s", out)
+	}
+	if strings.Contains(out, "insert failed") {
+		t.Fatalf("error event leaked internal error detail:\n%s", out)
 	}
 }
 

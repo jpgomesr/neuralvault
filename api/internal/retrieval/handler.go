@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jpgomesr/NeuralVault/internal/conversations"
+	"github.com/jpgomesr/NeuralVault/internal/httperr"
 	"github.com/jpgomesr/NeuralVault/internal/llm"
 	"github.com/jpgomesr/NeuralVault/internal/logger"
 	"github.com/jpgomesr/NeuralVault/internal/model"
@@ -76,8 +77,7 @@ func (h *Handler) ensureConversationInWorkspace(w http.ResponseWriter, r *http.R
 		return false
 	}
 	if err != nil {
-		slog.ErrorContext(r.Context(), "loading conversation failed", "err", err, "conversation_id", conversationID, "request_id", logger.RequestID(r.Context()))
-		http.Error(w, "failed to load conversation: "+err.Error(), http.StatusInternalServerError)
+		httperr.Internal(w, r, "loading conversation failed", err, "conversation_id", conversationID)
 		return false
 	}
 	if conv.WorkspaceID != workspaceID {
@@ -137,8 +137,7 @@ func (h *Handler) Query(w http.ResponseWriter, r *http.Request) {
 		TopK:        req.TopK,
 	})
 	if err != nil {
-		slog.ErrorContext(r.Context(), "query failed", "err", err, "workspace_id", req.WorkspaceID, "request_id", logger.RequestID(r.Context()))
-		http.Error(w, "failed to run query: "+err.Error(), http.StatusInternalServerError)
+		httperr.Internal(w, r, "query failed", err, "workspace_id", req.WorkspaceID)
 		return
 	}
 
@@ -155,8 +154,7 @@ func (h *Handler) Query(w http.ResponseWriter, r *http.Request) {
 	// question has a turn to persist here; /query/stream persists the answer too.
 	if req.ConversationID != nil {
 		if _, err := h.conversations.AppendMessage(r.Context(), *req.ConversationID, model.MessageRoleUser, req.Question, nil); err != nil {
-			slog.ErrorContext(r.Context(), "persisting question failed", "err", err, "conversation_id", *req.ConversationID, "request_id", logger.RequestID(r.Context()))
-			http.Error(w, "failed to persist message: "+err.Error(), http.StatusInternalServerError)
+			httperr.Internal(w, r, "persisting question failed", err, "conversation_id", *req.ConversationID)
 			return
 		}
 	}
@@ -214,7 +212,7 @@ func (h *Handler) QueryStream(w http.ResponseWriter, r *http.Request) {
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
-		http.Error(w, "streaming not supported by this server", http.StatusInternalServerError)
+		httperr.Internal(w, r, "query stream failed", errors.New("response writer does not support flushing"), "workspace_id", req.WorkspaceID)
 		return
 	}
 
@@ -279,16 +277,16 @@ waitForAnswer:
 
 	chunks, stream, err := ar.chunks, ar.stream, ar.err
 	if err != nil {
-		slog.ErrorContext(r.Context(), "answer failed", "err", err, "workspace_id", req.WorkspaceID, "request_id", logger.RequestID(r.Context()))
-		writeSSEEvent(w, "error", map[string]string{"error": "failed to run query: " + err.Error()})
+		msg := httperr.Message(r, "answer failed", err, "workspace_id", req.WorkspaceID)
+		writeSSEEvent(w, "error", map[string]string{"error": msg})
 		flusher.Flush()
 		return
 	}
 
 	if req.ConversationID != nil {
 		if _, err := h.conversations.AppendMessage(r.Context(), *req.ConversationID, model.MessageRoleUser, req.Question, nil); err != nil {
-			slog.ErrorContext(r.Context(), "persisting question failed", "err", err, "conversation_id", *req.ConversationID, "request_id", logger.RequestID(r.Context()))
-			writeSSEEvent(w, "error", map[string]string{"error": "failed to persist message: " + err.Error()})
+			msg := httperr.Message(r, "persisting question failed", err, "conversation_id", *req.ConversationID)
+			writeSSEEvent(w, "error", map[string]string{"error": msg})
 			flusher.Flush()
 			return
 		}
@@ -323,8 +321,8 @@ waitForAnswer:
 			}
 			tokenHeartbeat.Reset(sseHeartbeatInterval)
 			if chunk.Error != nil {
-				slog.ErrorContext(r.Context(), "completion stream error", "err", chunk.Error, "workspace_id", req.WorkspaceID, "request_id", logger.RequestID(r.Context()))
-				writeSSEEvent(w, "error", map[string]string{"error": chunk.Error.Error()})
+				msg := httperr.Message(r, "completion stream error", chunk.Error, "workspace_id", req.WorkspaceID)
+				writeSSEEvent(w, "error", map[string]string{"error": msg})
 				flusher.Flush()
 				// A partial answer isn't persisted — only completed turns are.
 				return

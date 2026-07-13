@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/jpgomesr/NeuralVault/internal/auth"
+	"github.com/jpgomesr/NeuralVault/internal/httperr"
 	"github.com/jpgomesr/NeuralVault/internal/logger"
 	"github.com/jpgomesr/NeuralVault/internal/model"
 )
@@ -57,8 +58,7 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 
 	ws, err := h.service.Create(r.Context(), userID, req.Name)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "create workspace failed", "err", err, "user_id", userID, "request_id", logger.RequestID(r.Context()))
-		http.Error(w, "failed to create workspace: "+err.Error(), http.StatusInternalServerError)
+		httperr.Internal(w, r, "create workspace failed", err, "user_id", userID)
 		return
 	}
 
@@ -83,8 +83,7 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 
 	list, err := h.service.List(r.Context(), userID)
 	if err != nil {
-		slog.ErrorContext(r.Context(), "list workspaces failed", "err", err, "user_id", userID, "request_id", logger.RequestID(r.Context()))
-		http.Error(w, "failed to list workspaces: "+err.Error(), http.StatusInternalServerError)
+		httperr.Internal(w, r, "list workspaces failed", err, "user_id", userID)
 		return
 	}
 	if list == nil {
