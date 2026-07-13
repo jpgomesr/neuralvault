@@ -29,6 +29,7 @@ func (s *Splitter) Split(_ context.Context, text string) ([]chunking.Span, error
 	var spans []chunking.Span
 	var currentLines []string
 	currentHeading := ""
+	currentHeadingLine := ""
 	currentLevel := 0
 	startLine := 1
 
@@ -47,17 +48,24 @@ func (s *Splitter) Split(_ context.Context, text string) ([]chunking.Span, error
 			})
 			return
 		}
-		// Section too large: subdivide by paragraph.
+		// Section too large: subdivide by paragraph. Every sub-chunk after the
+		// first needs the heading line re-prepended to its content, since the
+		// first paragraph is the only one that naturally retains it — without
+		// this, later sub-chunks get embedded with no topic/section context.
 		paras := splitByParagraph(content)
 		lineOffset := startLine
-		for _, p := range paras {
+		for i, p := range paras {
 			p = strings.TrimSpace(p)
 			if p == "" {
 				continue
 			}
 			pLineCount := strings.Count(p, "\n") + 1
+			spanContent := p
+			if i > 0 && currentHeadingLine != "" {
+				spanContent = currentHeadingLine + "\n\n" + p
+			}
 			spans = append(spans, chunking.Span{
-				Content:   p,
+				Content:   spanContent,
 				Heading:   currentHeading,
 				Level:     currentLevel,
 				StartLine: lineOffset,
@@ -67,17 +75,25 @@ func (s *Splitter) Split(_ context.Context, text string) ([]chunking.Span, error
 		}
 	}
 
+	inFence := false
 	for i, line := range lines {
-		level := headingLevel(line)
-		if level > 0 {
-			flush(i) // i is the 0-based index of the line *before* this heading
-			currentHeading = strings.TrimSpace(strings.TrimLeft(line, "#"))
-			currentLevel = level
-			currentLines = []string{line}
-			startLine = i + 1 // convert to 1-based
-		} else {
+		if isFenceDelimiter(line) {
+			inFence = !inFence
 			currentLines = append(currentLines, line)
+			continue
 		}
+		if !inFence {
+			if level := headingLevel(line); level > 0 {
+				flush(i) // i is the 0-based index of the line *before* this heading
+				currentHeading = strings.TrimSpace(strings.TrimLeft(line, "#"))
+				currentHeadingLine = line
+				currentLevel = level
+				currentLines = []string{line}
+				startLine = i + 1 // convert to 1-based
+				continue
+			}
+		}
+		currentLines = append(currentLines, line)
 	}
 	flush(len(lines))
 
@@ -100,13 +116,43 @@ func headingLevel(line string) int {
 	return 0
 }
 
+// isFenceDelimiter reports whether line opens or closes a fenced code block
+// (a line whose trimmed content starts with three or more backticks).
+func isFenceDelimiter(line string) bool {
+	return strings.HasPrefix(strings.TrimSpace(line), "```")
+}
+
+// splitByParagraph splits text on blank lines, treating a blank line inside a
+// fenced code block as ordinary content rather than a paragraph boundary, so a
+// fence's opening/closing markers never end up split across paragraphs.
 func splitByParagraph(text string) []string {
-	parts := strings.Split(text, "\n\n")
-	result := make([]string, 0, len(parts))
-	for _, p := range parts {
-		if p = strings.TrimSpace(p); p != "" {
+	lines := strings.Split(text, "\n")
+
+	var result []string
+	var current []string
+	inFence := false
+
+	flushCurrent := func() {
+		p := strings.TrimSpace(strings.Join(current, "\n"))
+		if p != "" {
 			result = append(result, p)
 		}
+		current = nil
 	}
+
+	for _, line := range lines {
+		if isFenceDelimiter(line) {
+			inFence = !inFence
+			current = append(current, line)
+			continue
+		}
+		if !inFence && strings.TrimSpace(line) == "" {
+			flushCurrent()
+			continue
+		}
+		current = append(current, line)
+	}
+	flushCurrent()
+
 	return result
 }
