@@ -138,12 +138,10 @@ func (s *SourceService) Create(ctx context.Context, req CreateRequest, files []F
 	}
 
 	minioPrefix := fmt.Sprintf("%s/%s/", req.WorkspaceID, sourceID)
-	meta, err := json.Marshal(model.FileSourceMetadata{RootPath: tempDir})
-	if err != nil {
-		os.RemoveAll(tempDir) //nolint:errcheck
-		return nil, fmt.Errorf("marshaling metadata: %w", err)
-	}
 
+	// File sources carry no persisted metadata: the only per-source runtime
+	// state (the temp-dir root path) is threaded explicitly to the indexing
+	// pipeline, never stored. Leaving Metadata nil persists SQL NULL.
 	source := model.Source{
 		ID:          sourceID,
 		WorkspaceID: req.WorkspaceID,
@@ -151,7 +149,6 @@ func (s *SourceService) Create(ctx context.Context, req CreateRequest, files []F
 		Type:        model.SourceTypeFile,
 		URI:         minioPrefix,
 		Status:      model.SourceStatusIndexing,
-		Metadata:    json.RawMessage(meta),
 		CreatedAt:   time.Now(),
 		UpdatedAt:   time.Now(),
 	}
@@ -334,7 +331,7 @@ func (s *SourceService) indexInBackground(source model.Source, tempDir string) {
 	defer os.RemoveAll(tempDir) //nolint:errcheck
 
 	start := time.Now()
-	total, err := s.runPipeline(ctx, source)
+	total, err := s.runPipeline(ctx, source, tempDir)
 	if err != nil {
 		slog.ErrorContext(ctx, "indexing failed", "err", err, "source_id", source.ID, "workspace_id", source.WorkspaceID)
 		if err := s.updateStatus(ctx, source.ID, model.SourceStatusError); err != nil {
@@ -394,10 +391,7 @@ func (s *SourceService) reingestInBackground(source model.Source) {
 		}
 	}
 
-	meta, _ := json.Marshal(model.FileSourceMetadata{RootPath: tempDir})
-	source.Metadata = json.RawMessage(meta)
-
-	total, err := s.runPipeline(ctx, source)
+	total, err := s.runPipeline(ctx, source, tempDir)
 	if err != nil {
 		s.failReingest(ctx, source, err)
 		return
@@ -428,8 +422,8 @@ func (s *SourceService) failReingest(ctx context.Context, source model.Source, c
 // runPipeline reads source content, chunks it, generates embeddings, and upserts
 // vectors into Qdrant. Publishes an EventIndexing event per file processed.
 // Returns total chunks created.
-func (s *SourceService) runPipeline(ctx context.Context, source model.Source) (int, error) {
-	requests, err := s.reader.Read(ctx, source)
+func (s *SourceService) runPipeline(ctx context.Context, source model.Source, rootPath string) (int, error) {
+	requests, err := s.reader.Read(ctx, source, rootPath)
 	if err != nil {
 		return 0, fmt.Errorf("reading source: %w", err)
 	}

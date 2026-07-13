@@ -2,7 +2,6 @@ package sourcereader
 
 import (
 	"context"
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,17 +12,14 @@ import (
 	"github.com/jpgomesr/NeuralVault/internal/model"
 )
 
-func makeSource(t *testing.T, rootPath string) model.Source {
+// makeSource builds a file source. The walk root is passed to Read separately
+// (runtime pipeline state), so no metadata is stored on the source.
+func makeSource(t *testing.T) model.Source {
 	t.Helper()
-	meta, err := json.Marshal(model.FileSourceMetadata{RootPath: rootPath})
-	if err != nil {
-		t.Fatalf("marshal metadata: %v", err)
-	}
 	return model.Source{
 		ID:          uuid.New(),
 		WorkspaceID: uuid.New(),
 		Type:        model.SourceTypeFile,
-		Metadata:    meta,
 	}
 }
 
@@ -41,21 +37,21 @@ func TestFileReader_Read(t *testing.T) {
 	r := NewFileReader()
 
 	tests := []struct {
-		name       string
-		setup      func(t *testing.T) model.Source
-		wantLen    int
-		wantErr    string // substring expected in error; empty means no error
-		check      func(t *testing.T, source model.Source, reqs []chunking.ChunkRequest)
+		name    string
+		setup   func(t *testing.T) (model.Source, string) // returns source + walk root
+		wantLen int
+		wantErr string // substring expected in error; empty means no error
+		check   func(t *testing.T, source model.Source, rootPath string, reqs []chunking.ChunkRequest)
 	}{
 		{
 			name: "single markdown file",
-			setup: func(t *testing.T) model.Source {
+			setup: func(t *testing.T) (model.Source, string) {
 				dir := t.TempDir()
 				writeFile(t, dir, "notes.md", "# Hello")
-				return makeSource(t, dir)
+				return makeSource(t), dir
 			},
 			wantLen: 1,
-			check: func(t *testing.T, _ model.Source, reqs []chunking.ChunkRequest) {
+			check: func(t *testing.T, _ model.Source, _ string, reqs []chunking.ChunkRequest) {
 				if reqs[0].ContentType != chunking.ContentTypeMarkdown {
 					t.Errorf("content type = %q, want %q", reqs[0].ContentType, chunking.ContentTypeMarkdown)
 				}
@@ -63,13 +59,13 @@ func TestFileReader_Read(t *testing.T) {
 		},
 		{
 			name: "single plaintext file",
-			setup: func(t *testing.T) model.Source {
+			setup: func(t *testing.T) (model.Source, string) {
 				dir := t.TempDir()
 				writeFile(t, dir, "readme.txt", "hello world")
-				return makeSource(t, dir)
+				return makeSource(t), dir
 			},
 			wantLen: 1,
-			check: func(t *testing.T, _ model.Source, reqs []chunking.ChunkRequest) {
+			check: func(t *testing.T, _ model.Source, _ string, reqs []chunking.ChunkRequest) {
 				if reqs[0].ContentType != chunking.ContentTypePlaintext {
 					t.Errorf("content type = %q, want %q", reqs[0].ContentType, chunking.ContentTypePlaintext)
 				}
@@ -77,19 +73,19 @@ func TestFileReader_Read(t *testing.T) {
 		},
 		{
 			name: "mixed extensions only supported ones returned",
-			setup: func(t *testing.T) model.Source {
+			setup: func(t *testing.T) (model.Source, string) {
 				dir := t.TempDir()
 				writeFile(t, dir, "a.md", "# A")
 				writeFile(t, dir, "b.txt", "B")
 				writeFile(t, dir, "c.go", "package main")
 				writeFile(t, dir, "d.log", "log line")
-				return makeSource(t, dir)
+				return makeSource(t), dir
 			},
 			wantLen: 2,
 		},
 		{
 			name: "nested directories discovered recursively",
-			setup: func(t *testing.T) model.Source {
+			setup: func(t *testing.T) (model.Source, string) {
 				dir := t.TempDir()
 				sub1 := filepath.Join(dir, "sub1")
 				sub2 := filepath.Join(sub1, "sub2")
@@ -99,58 +95,45 @@ func TestFileReader_Read(t *testing.T) {
 				writeFile(t, dir, "root.md", "root")
 				writeFile(t, sub1, "level1.md", "level1")
 				writeFile(t, sub2, "level2.md", "level2")
-				return makeSource(t, dir)
+				return makeSource(t), dir
 			},
 			wantLen: 3,
 		},
 		{
 			name: "empty directory returns empty slice without error",
-			setup: func(t *testing.T) model.Source {
-				return makeSource(t, t.TempDir())
+			setup: func(t *testing.T) (model.Source, string) {
+				return makeSource(t), t.TempDir()
 			},
 			wantLen: 0,
 		},
 		{
 			name: "root path does not exist",
-			setup: func(t *testing.T) model.Source {
-				return makeSource(t, filepath.Join(t.TempDir(), "does-not-exist"))
+			setup: func(t *testing.T) (model.Source, string) {
+				return makeSource(t), filepath.Join(t.TempDir(), "does-not-exist")
 			},
 			wantErr: "root path",
 		},
 		{
-			name: "invalid metadata JSON",
-			setup: func(t *testing.T) model.Source {
-				return model.Source{
-					ID:          uuid.New(),
-					WorkspaceID: uuid.New(),
-					Type:        model.SourceTypeFile,
-					Metadata:    []byte("not-json"),
-				}
+			name: "nil metadata is ignored; root path threaded explicitly",
+			setup: func(t *testing.T) (model.Source, string) {
+				dir := t.TempDir()
+				writeFile(t, dir, "notes.md", "# Hello")
+				src := makeSource(t)
+				src.Metadata = nil // reader must not depend on source.Metadata
+				return src, dir
 			},
-			wantErr: "decoding file source metadata",
-		},
-		{
-			name: "nil metadata",
-			setup: func(t *testing.T) model.Source {
-				return model.Source{
-					ID:          uuid.New(),
-					WorkspaceID: uuid.New(),
-					Type:        model.SourceTypeFile,
-					Metadata:    nil,
-				}
-			},
-			wantErr: "decoding file source metadata",
+			wantLen: 1,
 		},
 		{
 			name: "source IDs propagated to every request",
-			setup: func(t *testing.T) model.Source {
+			setup: func(t *testing.T) (model.Source, string) {
 				dir := t.TempDir()
 				writeFile(t, dir, "a.md", "A")
 				writeFile(t, dir, "b.md", "B")
-				return makeSource(t, dir)
+				return makeSource(t), dir
 			},
 			wantLen: 2,
-			check: func(t *testing.T, source model.Source, reqs []chunking.ChunkRequest) {
+			check: func(t *testing.T, source model.Source, _ string, reqs []chunking.ChunkRequest) {
 				for _, req := range reqs {
 					if req.SourceID != source.ID {
 						t.Errorf("SourceID = %v, want %v", req.SourceID, source.ID)
@@ -163,13 +146,13 @@ func TestFileReader_Read(t *testing.T) {
 		},
 		{
 			name: "file content is read verbatim",
-			setup: func(t *testing.T) model.Source {
+			setup: func(t *testing.T) (model.Source, string) {
 				dir := t.TempDir()
 				writeFile(t, dir, "exact.md", "# Exact Content\n\nParagraph.")
-				return makeSource(t, dir)
+				return makeSource(t), dir
 			},
 			wantLen: 1,
-			check: func(t *testing.T, _ model.Source, reqs []chunking.ChunkRequest) {
+			check: func(t *testing.T, _ model.Source, _ string, reqs []chunking.ChunkRequest) {
 				if reqs[0].Content != "# Exact Content\n\nParagraph." {
 					t.Errorf("content = %q, want exact match", reqs[0].Content)
 				}
@@ -177,13 +160,13 @@ func TestFileReader_Read(t *testing.T) {
 		},
 		{
 			name: "root path is a single file",
-			setup: func(t *testing.T) model.Source {
+			setup: func(t *testing.T) (model.Source, string) {
 				dir := t.TempDir()
 				path := writeFile(t, dir, "single.md", "# Solo")
-				return makeSource(t, path)
+				return makeSource(t), path
 			},
 			wantLen: 1,
-			check: func(t *testing.T, _ model.Source, reqs []chunking.ChunkRequest) {
+			check: func(t *testing.T, _ model.Source, _ string, reqs []chunking.ChunkRequest) {
 				if reqs[0].FilePath != "single.md" {
 					t.Errorf("FilePath = %q, want %q", reqs[0].FilePath, "single.md")
 				}
@@ -191,7 +174,7 @@ func TestFileReader_Read(t *testing.T) {
 		},
 		{
 			name: "file paths are relative to root, not absolute temp paths",
-			setup: func(t *testing.T) model.Source {
+			setup: func(t *testing.T) (model.Source, string) {
 				dir := t.TempDir()
 				sub := filepath.Join(dir, "sub")
 				if err := os.MkdirAll(sub, 0o700); err != nil {
@@ -199,21 +182,17 @@ func TestFileReader_Read(t *testing.T) {
 				}
 				writeFile(t, dir, "root.md", "root")
 				writeFile(t, sub, "child.md", "child")
-				return makeSource(t, dir)
+				return makeSource(t), dir
 			},
 			wantLen: 2,
-			check: func(t *testing.T, source model.Source, reqs []chunking.ChunkRequest) {
-				var meta model.FileSourceMetadata
-				if err := json.Unmarshal(source.Metadata, &meta); err != nil {
-					t.Fatalf("unmarshal metadata: %v", err)
-				}
+			check: func(t *testing.T, _ model.Source, rootPath string, reqs []chunking.ChunkRequest) {
 				got := make(map[string]bool, len(reqs))
 				for _, req := range reqs {
 					got[req.FilePath] = true
 					if filepath.IsAbs(req.FilePath) {
 						t.Errorf("FilePath %q is absolute, want relative", req.FilePath)
 					}
-					if strings.HasPrefix(req.FilePath, filepath.ToSlash(meta.RootPath)) {
+					if strings.HasPrefix(req.FilePath, filepath.ToSlash(rootPath)) {
 						t.Errorf("FilePath %q leaks the temp-dir root prefix", req.FilePath)
 					}
 				}
@@ -228,8 +207,8 @@ func TestFileReader_Read(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			source := tc.setup(t)
-			reqs, err := r.Read(ctx, source)
+			source, rootPath := tc.setup(t)
+			reqs, err := r.Read(ctx, source, rootPath)
 
 			if tc.wantErr != "" {
 				if err == nil {
@@ -248,7 +227,7 @@ func TestFileReader_Read(t *testing.T) {
 				t.Errorf("got %d requests, want %d", len(reqs), tc.wantLen)
 			}
 			if tc.check != nil {
-				tc.check(t, source, reqs)
+				tc.check(t, source, rootPath, reqs)
 			}
 		})
 	}
