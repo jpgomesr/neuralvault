@@ -20,6 +20,7 @@ import (
 
 	"github.com/jpgomesr/NeuralVault/internal/config"
 	"github.com/jpgomesr/NeuralVault/internal/embedding"
+	"github.com/jpgomesr/NeuralVault/internal/llm"
 	"github.com/jpgomesr/NeuralVault/internal/model"
 	"github.com/jpgomesr/NeuralVault/internal/reranking"
 	"github.com/jpgomesr/NeuralVault/internal/storage"
@@ -637,5 +638,44 @@ func TestRetrieve_FiltersCrossWorkspaceLeak(t *testing.T) {
 	}
 	if len(results) != 0 {
 		t.Fatalf("expected leaked cross-workspace chunk to be filtered out, got %d results", len(results))
+	}
+}
+
+// ── Answer tests ────────────────────────────────────────────────────────────
+//
+// The retrieval-error and stream-start-error branches, plus the empty-context
+// case, are covered in answer_test.go. This one exercises the grounded path
+// that answer_test.go's empty-query cases don't: with a real retrieved chunk,
+// buildMessages emits the numbered context block into the RAG prompt.
+
+// TestAnswer_GroundsPromptWithRetrievedChunk proves Answer feeds the retrieved
+// chunk into the completion prompt as a numbered context block, and returns the
+// chunk to the caller alongside the stream.
+func TestAnswer_GroundsPromptWithRetrievedChunk(t *testing.T) {
+	ctx := context.Background()
+	wid := insertWS(ctx, t)
+	sid := insertSource(ctx, t, wid)
+	insertChunk(ctx, t, wid, sid, "grounding content", vec(1.0))
+
+	ch := make(chan llm.StreamChunk, 1)
+	ch <- llm.StreamChunk{Done: true}
+	close(ch)
+	prov := &fakeProvider{stream: ch}
+	svc := NewRetrievalService(sharedPool, fixedEmbedder{vector: vec(1.0)}, sharedVecStore, prov, passthroughReranker, sharedQdrantCfg.CollectionName, "answer-model")
+
+	chunks, stream, err := svc.Answer(ctx, RetrieveRequest{WorkspaceID: wid, Query: "what does it show", TopK: 5})
+	if err != nil {
+		t.Fatalf("Answer: %v", err)
+	}
+	if len(chunks) != 1 {
+		t.Fatalf("expected 1 grounding chunk, got %d", len(chunks))
+	}
+	if got := <-stream; !got.Done {
+		t.Fatalf("expected the terminal Done chunk, got %+v", got)
+	}
+
+	userMsg := prov.gotReq.Messages[len(prov.gotReq.Messages)-1].Content
+	if !strings.Contains(userMsg, "[1] grounding content") || !strings.Contains(userMsg, "what does it show") {
+		t.Errorf("expected prompt to carry the numbered chunk block and question, got: %q", userMsg)
 	}
 }

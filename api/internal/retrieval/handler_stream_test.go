@@ -1,6 +1,7 @@
 package retrieval
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -96,6 +97,67 @@ func TestQueryStream_SendsHeartbeatDuringSlowAnswer(t *testing.T) {
 	out := w.Body.String()
 	if !strings.Contains(out, ": keep-alive") {
 		t.Fatalf("expected at least one heartbeat comment while Answer() was slow, got:\n%q", out)
+	}
+}
+
+// TestQueryStream_SendsHeartbeatDuringSlowTokens proves the inter-token
+// heartbeat: once the answer is streaming, a slow gap between generated tokens
+// still emits periodic bytes so a proxy in front of this API never sees enough
+// silence to kill the connection mid-stream.
+func TestQueryStream_SendsHeartbeatDuringSlowTokens(t *testing.T) {
+	orig := sseHeartbeatInterval
+	sseHeartbeatInterval = 10 * time.Millisecond
+	t.Cleanup(func() { sseHeartbeatInterval = orig })
+
+	fake := &fakeRetriever{
+		streamOut:  []llm.StreamChunk{{Content: "tok"}, {Done: true}},
+		tokenDelay: 50 * time.Millisecond,
+	}
+	h := NewHandler(fake, allowMembers(), noConversations())
+
+	body := `{"workspace_id":"` + uuid.New().String() + `","question":"hi"}`
+	w := httptest.NewRecorder()
+	h.QueryStream(w, postQuery(body))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	out := w.Body.String()
+	if !strings.Contains(out, ": keep-alive") {
+		t.Fatalf("expected a heartbeat comment while tokens were slow, got:\n%q", out)
+	}
+	if !strings.Contains(out, "event: done") {
+		t.Fatalf("expected the stream to still complete with a done event, got:\n%q", out)
+	}
+}
+
+// TestQueryStream_ClientDisconnectDuringAnswer proves the handler stops waiting
+// and returns when the client goes away (request context cancelled) while
+// Answer() is still running, rather than blocking on a stream that will never
+// be consumed.
+func TestQueryStream_ClientDisconnectDuringAnswer(t *testing.T) {
+	fake := &fakeRetriever{
+		answerDelay: 200 * time.Millisecond,
+		streamOut:   []llm.StreamChunk{{Done: true}},
+	}
+	h := NewHandler(fake, allowMembers(), noConversations())
+
+	ctx, cancel := context.WithCancel(context.Background())
+	body := `{"workspace_id":"` + uuid.New().String() + `","question":"hi"}`
+	req := postQuery(body).WithContext(ctx)
+
+	// Cancel well before Answer() would return, so the wait loop takes its
+	// context-cancelled branch.
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		cancel()
+	}()
+
+	w := httptest.NewRecorder()
+	h.QueryStream(w, req)
+
+	if strings.Contains(w.Body.String(), "event: done") {
+		t.Fatalf("expected the handler to return on client disconnect without a done event, got:\n%q", w.Body.String())
 	}
 }
 

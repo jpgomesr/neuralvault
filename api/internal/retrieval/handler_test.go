@@ -24,6 +24,7 @@ type fakeRetriever struct {
 	streamOut   []llm.StreamChunk // chunks Answer emits on its channel
 	answerErr   error
 	answerDelay time.Duration // simulates slow retrieval/rerank/LLM-startup
+	tokenDelay  time.Duration // simulates a slow gap between generated tokens
 }
 
 func (f *fakeRetriever) Retrieve(_ context.Context, req RetrieveRequest) ([]RetrievedChunk, error) {
@@ -38,6 +39,19 @@ func (f *fakeRetriever) Answer(_ context.Context, req RetrieveRequest) ([]Retrie
 	}
 	if f.answerErr != nil {
 		return nil, nil, f.answerErr
+	}
+	// With tokenDelay set, emit chunks from a goroutine with a pause before
+	// each one, so the handler's inter-token heartbeat path is exercised.
+	if f.tokenDelay > 0 {
+		ch := make(chan llm.StreamChunk)
+		go func() {
+			defer close(ch)
+			for _, c := range f.streamOut {
+				time.Sleep(f.tokenDelay)
+				ch <- c
+			}
+		}()
+		return f.results, ch, nil
 	}
 	ch := make(chan llm.StreamChunk, len(f.streamOut))
 	for _, c := range f.streamOut {
