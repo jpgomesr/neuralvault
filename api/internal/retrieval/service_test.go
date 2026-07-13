@@ -21,6 +21,7 @@ import (
 	"github.com/jpgomesr/NeuralVault/internal/config"
 	"github.com/jpgomesr/NeuralVault/internal/embedding"
 	"github.com/jpgomesr/NeuralVault/internal/model"
+	"github.com/jpgomesr/NeuralVault/internal/reranking"
 	"github.com/jpgomesr/NeuralVault/internal/storage"
 	pgstore "github.com/jpgomesr/NeuralVault/internal/storage/postgres"
 	"github.com/jpgomesr/NeuralVault/internal/vectorstorage"
@@ -92,13 +93,51 @@ func scoredPointWithUUID(id uuid.UUID, score float32) *qdrantpb.ScoredPoint {
 	return &qdrantpb.ScoredPoint{Id: qdrantpb.NewID(id.String()), Score: score}
 }
 
-// queryFailingPool wraps a real storage.Pool and forces an error on any
-// Query whose SQL targets the chunks table; all other calls delegate.
+// fakeReranker lets a test control exactly what Rerank returns.
+type fakeReranker struct {
+	rerankFn func(ctx context.Context, query string, candidates []reranking.Candidate) ([]reranking.Result, error)
+}
+
+func (f fakeReranker) Rerank(ctx context.Context, query string, candidates []reranking.Candidate) ([]reranking.Result, error) {
+	return f.rerankFn(ctx, query, candidates)
+}
+
+func (f fakeReranker) HealthCheck(_ context.Context) error { return nil }
+
+// passthroughRerank assigns strictly descending scores in input order, so
+// reranking never changes the hybrid-fused ordering it was handed — used as
+// the default reranker in tests that aren't specifically exercising
+// reranking behavior, so their existing ordering assertions stay valid.
+func passthroughRerank(_ context.Context, _ string, candidates []reranking.Candidate) ([]reranking.Result, error) {
+	results := make([]reranking.Result, len(candidates))
+	for i, c := range candidates {
+		results[i] = reranking.Result{CandidateID: c.ID, Score: float32(len(candidates) - i)}
+	}
+	return results, nil
+}
+
+var passthroughReranker = fakeReranker{rerankFn: passthroughRerank}
+
+// queryFailingPool wraps a real storage.Pool and forces an error on
+// loadChunks's SELECT specifically (matched on "id = ANY(", unique to that
+// query), leaving lexicalSearch's separate chunks query unaffected.
 type queryFailingPool struct{ storage.Pool }
 
 func (p queryFailingPool) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
-	if strings.Contains(sql, "FROM chunks") {
+	if strings.Contains(sql, "id = ANY(") {
 		return nil, errors.New("injected chunks query failure")
+	}
+	return p.Pool.Query(ctx, sql, args...)
+}
+
+// lexicalSearchFailingPool wraps a real storage.Pool and forces an error on
+// lexicalSearch's SELECT specifically (matched on "content_tsv", unique to
+// that query), leaving loadChunks's separate chunks query unaffected.
+type lexicalSearchFailingPool struct{ storage.Pool }
+
+func (p lexicalSearchFailingPool) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
+	if strings.Contains(sql, "content_tsv") {
+		return nil, errors.New("injected lexical search failure")
 	}
 	return p.Pool.Query(ctx, sql, args...)
 }
@@ -297,7 +336,7 @@ func insertChunk(ctx context.Context, t *testing.T, workspaceID, sourceID uuid.U
 }
 
 func newSvc(emb embedding.Embedder) *RetrievalService {
-	return NewRetrievalService(sharedPool, emb, sharedVecStore, nil, sharedQdrantCfg.CollectionName, "")
+	return NewRetrievalService(sharedPool, emb, sharedVecStore, nil, passthroughReranker, sharedQdrantCfg.CollectionName, "")
 }
 
 // vec returns a fixed one-hot vector, used where only vector identity (not
@@ -433,7 +472,7 @@ func TestRetrieve_QdrantQueryError(t *testing.T) {
 	vs := fakeVectorStore{queryFn: func(_ context.Context, _ *qdrantpb.QueryPoints) ([]*qdrantpb.ScoredPoint, error) {
 		return nil, errors.New("qdrant unreachable")
 	}}
-	svc := NewRetrievalService(sharedPool, fixedEmbedder{vector: vec(1.0)}, vs, nil, sharedQdrantCfg.CollectionName, "")
+	svc := NewRetrievalService(sharedPool, fixedEmbedder{vector: vec(1.0)}, vs, nil, passthroughReranker, sharedQdrantCfg.CollectionName, "")
 
 	_, err := svc.Retrieve(ctx, RetrieveRequest{WorkspaceID: wid, Query: "anything"})
 	if err == nil || !strings.Contains(err.Error(), "qdrant query") {
@@ -448,7 +487,7 @@ func TestRetrieve_InvalidPointID(t *testing.T) {
 	vs := fakeVectorStore{queryFn: func(_ context.Context, _ *qdrantpb.QueryPoints) ([]*qdrantpb.ScoredPoint, error) {
 		return []*qdrantpb.ScoredPoint{{Id: qdrantpb.NewID("not-a-uuid"), Score: 0.5}}, nil
 	}}
-	svc := NewRetrievalService(sharedPool, fixedEmbedder{vector: vec(1.0)}, vs, nil, sharedQdrantCfg.CollectionName, "")
+	svc := NewRetrievalService(sharedPool, fixedEmbedder{vector: vec(1.0)}, vs, nil, passthroughReranker, sharedQdrantCfg.CollectionName, "")
 
 	_, err := svc.Retrieve(ctx, RetrieveRequest{WorkspaceID: wid, Query: "anything"})
 	if err == nil || !strings.Contains(err.Error(), "parsing point id") {
@@ -465,11 +504,114 @@ func TestRetrieve_LoadChunksError(t *testing.T) {
 	vs := fakeVectorStore{queryFn: func(_ context.Context, _ *qdrantpb.QueryPoints) ([]*qdrantpb.ScoredPoint, error) {
 		return []*qdrantpb.ScoredPoint{scoredPointWithUUID(chunk.ID, 0.9)}, nil
 	}}
-	svc := NewRetrievalService(queryFailingPool{Pool: sharedPool}, fixedEmbedder{vector: vec(1.0)}, vs, nil, sharedQdrantCfg.CollectionName, "")
+	svc := NewRetrievalService(queryFailingPool{Pool: sharedPool}, fixedEmbedder{vector: vec(1.0)}, vs, nil, passthroughReranker, sharedQdrantCfg.CollectionName, "")
 
 	_, err := svc.Retrieve(ctx, RetrieveRequest{WorkspaceID: wid, Query: "anything"})
 	if err == nil || !strings.Contains(err.Error(), "loading chunks") {
 		t.Fatalf("expected loading chunks error, got: %v", err)
+	}
+}
+
+func TestRetrieve_LexicalSearchError(t *testing.T) {
+	ctx := context.Background()
+	wid := insertWS(ctx, t)
+	sid := insertSource(ctx, t, wid)
+	chunk := insertChunk(ctx, t, wid, sid, "content", vec(1.0))
+
+	vs := fakeVectorStore{queryFn: func(_ context.Context, _ *qdrantpb.QueryPoints) ([]*qdrantpb.ScoredPoint, error) {
+		return []*qdrantpb.ScoredPoint{scoredPointWithUUID(chunk.ID, 0.9)}, nil
+	}}
+	svc := NewRetrievalService(lexicalSearchFailingPool{Pool: sharedPool}, fixedEmbedder{vector: vec(1.0)}, vs, nil, passthroughReranker, sharedQdrantCfg.CollectionName, "")
+
+	_, err := svc.Retrieve(ctx, RetrieveRequest{WorkspaceID: wid, Query: "anything"})
+	if err == nil || !strings.Contains(err.Error(), "lexical search") {
+		t.Fatalf("expected lexical search error, got: %v", err)
+	}
+}
+
+// TestRetrieve_LexicalMatchRescuesPoorVectorScore proves the core reason
+// hybrid fusion exists: a chunk whose content literally contains the query
+// term, but whose vector is orthogonal to the query embedding (the worst
+// possible cosine score), still surfaces — because Reciprocal Rank Fusion
+// combines its strong lexical rank with its weak vector rank, rather than
+// relying on vector similarity alone.
+func TestRetrieve_LexicalMatchRescuesPoorVectorScore(t *testing.T) {
+	ctx := context.Background()
+	wid := insertWS(ctx, t)
+	sid := insertSource(ctx, t, wid)
+
+	queryVector := oneHot(0, 1.0)
+	insertChunk(ctx, t, wid, sid, "irrelevant filler content", queryVector) // best cosine, no lexical match
+	target := insertChunk(ctx, t, wid, sid, "the gizmoterm appears here", oneHot(1, 1.0)) // orthogonal cosine, exact lexical match
+
+	svc := newSvc(fixedEmbedder{vector: queryVector})
+	results, err := svc.Retrieve(ctx, RetrieveRequest{WorkspaceID: wid, Query: "gizmoterm", TopK: 1})
+	if err != nil {
+		t.Fatalf("Retrieve: %v", err)
+	}
+	if len(results) != 1 || results[0].Chunk.ID != target.ID {
+		t.Fatalf("expected the lexical-match chunk to win despite its poor vector score, got %+v", results)
+	}
+}
+
+// TestRetrieve_RerankOverridesHybridOrder proves reranking is a real second
+// pass, not a no-op: a chunk that ranks second by hybrid (vector+lexical)
+// fusion can still win the final ordering if the cross-encoder scores it
+// higher — reranking is meant to correct exactly this kind of case, where
+// neither vector nor lexical similarity captured true relevance.
+func TestRetrieve_RerankOverridesHybridOrder(t *testing.T) {
+	ctx := context.Background()
+	wid := insertWS(ctx, t)
+	sid := insertSource(ctx, t, wid)
+
+	queryVector := oneHot(0, 1.0)
+	hybridWinner := insertChunk(ctx, t, wid, sid, "ranks first by cosine", queryVector)
+	rerankWinner := insertChunk(ctx, t, wid, sid, "ranks second by cosine, first by rerank", []float32{0.9, 0.1, 0, 0, 0, 0, 0, 0})
+
+	invertOrder := fakeReranker{rerankFn: func(_ context.Context, _ string, candidates []reranking.Candidate) ([]reranking.Result, error) {
+		results := make([]reranking.Result, len(candidates))
+		for i, c := range candidates {
+			score := float32(0)
+			if c.ID == rerankWinner.ID.String() {
+				score = 1
+			}
+			results[i] = reranking.Result{CandidateID: c.ID, Score: score}
+		}
+		return results, nil
+	}}
+
+	svc := NewRetrievalService(sharedPool, fixedEmbedder{vector: queryVector}, sharedVecStore, nil, invertOrder, sharedQdrantCfg.CollectionName, "")
+	results, err := svc.Retrieve(ctx, RetrieveRequest{WorkspaceID: wid, Query: "anything", TopK: 1})
+	if err != nil {
+		t.Fatalf("Retrieve: %v", err)
+	}
+	if len(results) != 1 || results[0].Chunk.ID != rerankWinner.ID {
+		t.Fatalf("expected reranker's choice %q to win over hybrid's choice %q, got %+v", rerankWinner.ID, hybridWinner.ID, results)
+	}
+}
+
+// TestRetrieve_RerankFailureDegradesGracefully proves a reranker error does
+// not fail the request: Retrieve must fall back to the hybrid-fused ordering
+// rather than returning no answer over a reranker hiccup.
+func TestRetrieve_RerankFailureDegradesGracefully(t *testing.T) {
+	ctx := context.Background()
+	wid := insertWS(ctx, t)
+	sid := insertSource(ctx, t, wid)
+
+	queryVector := oneHot(0, 1.0)
+	best := insertChunk(ctx, t, wid, sid, "closest match", queryVector)
+
+	failingReranker := fakeReranker{rerankFn: func(_ context.Context, _ string, _ []reranking.Candidate) ([]reranking.Result, error) {
+		return nil, errors.New("reranker unavailable")
+	}}
+
+	svc := NewRetrievalService(sharedPool, fixedEmbedder{vector: queryVector}, sharedVecStore, nil, failingReranker, sharedQdrantCfg.CollectionName, "")
+	results, err := svc.Retrieve(ctx, RetrieveRequest{WorkspaceID: wid, Query: "anything", TopK: 1})
+	if err != nil {
+		t.Fatalf("expected Retrieve to succeed despite reranker failure, got: %v", err)
+	}
+	if len(results) != 1 || results[0].Chunk.ID != best.ID {
+		t.Fatalf("expected hybrid-fused result to survive reranker failure, got %+v", results)
 	}
 }
 
@@ -487,7 +629,7 @@ func TestRetrieve_FiltersCrossWorkspaceLeak(t *testing.T) {
 	vs := fakeVectorStore{queryFn: func(_ context.Context, _ *qdrantpb.QueryPoints) ([]*qdrantpb.ScoredPoint, error) {
 		return []*qdrantpb.ScoredPoint{scoredPointWithUUID(chunkB.ID, 0.9)}, nil
 	}}
-	svc := NewRetrievalService(sharedPool, fixedEmbedder{vector: vec(1.0)}, vs, nil, sharedQdrantCfg.CollectionName, "")
+	svc := NewRetrievalService(sharedPool, fixedEmbedder{vector: vec(1.0)}, vs, nil, passthroughReranker, sharedQdrantCfg.CollectionName, "")
 
 	results, err := svc.Retrieve(ctx, RetrieveRequest{WorkspaceID: widA, Query: "anything"})
 	if err != nil {

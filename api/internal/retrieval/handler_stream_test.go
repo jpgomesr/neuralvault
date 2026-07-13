@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -56,8 +57,45 @@ func TestQueryStream_AnswerError(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.QueryStream(w, postQuery(body))
 
-	if w.Code != http.StatusInternalServerError {
-		t.Fatalf("expected 500, got %d", w.Code)
+	// SSE headers are sent before Answer() runs (see handler.go), so an
+	// Answer() failure is reported as an SSE error event, not an HTTP error
+	// status — the response is already committed to text/event-stream by the
+	// time this failure is known.
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 (headers already sent), got %d", w.Code)
+	}
+	out := w.Body.String()
+	if !strings.Contains(out, "event: error") || !strings.Contains(out, "boom") {
+		t.Fatalf("expected an error event in the stream, got:\n%s", out)
+	}
+}
+
+// TestQueryStream_SendsHeartbeatDuringSlowAnswer proves the actual point of
+// the heartbeat mechanism: while Answer() is slow (a cold-loading local LLM,
+// in production), the SSE stream still emits bytes periodically so a proxy
+// sitting in front of this API never sees enough silence to kill the
+// connection.
+func TestQueryStream_SendsHeartbeatDuringSlowAnswer(t *testing.T) {
+	orig := sseHeartbeatInterval
+	sseHeartbeatInterval = 10 * time.Millisecond
+	t.Cleanup(func() { sseHeartbeatInterval = orig })
+
+	fake := &fakeRetriever{
+		answerDelay: 50 * time.Millisecond,
+		streamOut:   []llm.StreamChunk{{Done: true}},
+	}
+	h := NewHandler(fake, allowMembers(), noConversations())
+
+	body := `{"workspace_id":"` + uuid.New().String() + `","question":"hi"}`
+	w := httptest.NewRecorder()
+	h.QueryStream(w, postQuery(body))
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	out := w.Body.String()
+	if !strings.Contains(out, ": keep-alive") {
+		t.Fatalf("expected at least one heartbeat comment while Answer() was slow, got:\n%q", out)
 	}
 }
 
@@ -148,11 +186,18 @@ func TestQueryStream_PersistQuestionError(t *testing.T) {
 	w := httptest.NewRecorder()
 	h.QueryStream(w, postQuery(body))
 
-	if w.Code != http.StatusInternalServerError {
-		t.Fatalf("expected 500, got %d: %s", w.Code, w.Body.String())
+	// SSE headers are sent before persisting the question (see handler.go),
+	// so this failure is reported as an SSE error event, not an HTTP error
+	// status.
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 (headers already sent), got %d: %s", w.Code, w.Body.String())
 	}
-	if ct := w.Header().Get("Content-Type"); ct == "text/event-stream" {
-		t.Fatalf("SSE headers should not be written when persisting the question fails first")
+	if ct := w.Header().Get("Content-Type"); ct != "text/event-stream" {
+		t.Fatalf("expected SSE headers to already be written, got Content-Type %q", ct)
+	}
+	out := w.Body.String()
+	if !strings.Contains(out, "event: error") || !strings.Contains(out, "insert failed") {
+		t.Fatalf("expected an error event in the stream, got:\n%s", out)
 	}
 }
 

@@ -21,7 +21,7 @@ Core retrieval pipeline.
 
 Improving search accuracy and observability.
 
-- [ ] Hybrid search (semantic + keyword)
+- [X] Hybrid search (semantic + keyword)
 - [ ] Metadata filtering
 - [ ] Reranking layer
 - [ ] Dashboard

@@ -16,6 +16,7 @@ import (
 	"github.com/jpgomesr/NeuralVault/internal/llm"
 	"github.com/jpgomesr/NeuralVault/internal/logger"
 	"github.com/jpgomesr/NeuralVault/internal/objectstorage"
+	"github.com/jpgomesr/NeuralVault/internal/reranking"
 	"github.com/jpgomesr/NeuralVault/internal/router"
 	"github.com/jpgomesr/NeuralVault/internal/sources"
 	"github.com/jpgomesr/NeuralVault/internal/storage"
@@ -83,13 +84,19 @@ func main() {
 		os.Exit(1)
 	}
 
+	reranker, err := reranking.NewReranker(ctx, cfg)
+	if err != nil {
+		slog.Error("failed to initialise reranker", "err", err)
+		os.Exit(1)
+	}
+
 	authService, err := auth.NewAuthService(ctx, cfg, pgPool)
 	if err != nil {
 		slog.Error("failed to initialise auth service", "err", err)
 		os.Exit(1)
 	}
 
-	r := router.NewRouter(cfg, pgPool, minioClient, embedder, qdrantClient, llmProvider, authService)
+	r := router.NewRouter(cfg, pgPool, minioClient, embedder, qdrantClient, llmProvider, reranker, authService)
 
 	// ctx is cancelled on SIGINT/SIGTERM to trigger graceful shutdown.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
