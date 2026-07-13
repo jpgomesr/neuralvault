@@ -171,6 +171,38 @@ func TestEmbed_DoesNotPrefixNonNomicModels(t *testing.T) {
 	}
 }
 
+func TestEmbedBatch_DoesNotPrefixNonNomicModels(t *testing.T) {
+	var gotBody map[string]any
+	client := newTestClientWithModel(t, "mxbai-embed-large", func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatalf("decoding request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"embeddings": [][]float32{{0.1}, {0.2}},
+		})
+	})
+
+	chunks := []embedding.Chunk{
+		{ID: "a", Text: "first"},
+		{ID: "b", Text: "second"},
+	}
+	if _, err := client.EmbedBatch(context.Background(), chunks); err != nil {
+		t.Fatalf("EmbedBatch: %v", err)
+	}
+
+	input, ok := gotBody["input"].([]any)
+	want := []string{"first", "second"}
+	if !ok || len(input) != len(want) {
+		t.Fatalf("expected unprefixed input %v, got %v", want, gotBody["input"])
+	}
+	for i, w := range want {
+		if input[i] != w {
+			t.Fatalf("index %d: expected unprefixed %q, got %v", i, w, input[i])
+		}
+	}
+}
+
 func TestHealthCheck_Reachable(t *testing.T) {
 	// newTestClient already serves a valid /api/tags response, so the server is
 	// reachable and HealthCheck should succeed.
