@@ -1,4 +1,4 @@
-.PHONY: help run build build-cli test lint swag migrate migrate-up migrate-down migrate-status run-cli up down logs
+.PHONY: help run build build-cli test lint swag migrate migrate-up migrate-down migrate-status run-cli up up-gpu down logs
 
 API_DIR := api
 
@@ -16,7 +16,8 @@ help:
 	@echo "  migrate-down    Roll back the last migration"
 	@echo "  migrate-status  Show migration status"
 	@echo "  migrate CMD=<cmd>  Run a specific goose command"
-	@echo "  up       Start infrastructure services (postgres, qdrant, ollama)"
+	@echo "  up       Start infrastructure services (postgres, qdrant, ollama) — CPU only"
+	@echo "  up-gpu   Same as up, but with NVIDIA GPU passthrough for ollama (requires the NVIDIA Container Toolkit)"
 	@echo "  down     Stop infrastructure services"
 	@echo "  logs     Tail logs from all infrastructure services"
 
@@ -63,6 +64,9 @@ migrate:
 
 up:
 	docker compose up -d
+
+up-gpu:
+	docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
 
 down:
 	docker compose down

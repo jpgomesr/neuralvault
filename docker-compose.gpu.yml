@@ -1,0 +1,19 @@
+# Optional NVIDIA GPU passthrough for the ollama service. Requires an NVIDIA
+# GPU, the NVIDIA driver, and the NVIDIA Container Toolkit installed on the
+# Docker host (Docker Desktop + WSL2 supports this on Windows).
+#
+# Not applied by default — docker-compose.yml alone must work on any machine,
+# GPU or not. Layer this file on top to opt in:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
+#
+# See getting-started.md for details.
+services:
+  ollama:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

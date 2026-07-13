@@ -3,8 +3,8 @@
 This guide walks you through running NeuralVault locally from scratch.
 
 NeuralVault runs as **infrastructure in Docker Compose** (Postgres, Qdrant, Ollama,
-MinIO, Keycloak) plus the **Go API** and **Next.js frontend**, which you run on your
-host during development.
+MinIO, Keycloak, a reranker) plus the **Go API** and **Next.js frontend**, which you
+run on your host during development.
 
 ---
 
@@ -51,6 +51,10 @@ model referenced by `OLLAMA_COMPLETION_MODEL` (default `llama3`):
 ollama pull llama3
 ```
 
+No manual pull is needed for the reranker — the `reranker` container downloads its
+model (`RERANKER_MODEL`, default `BAAI/bge-reranker-base`, a few hundred MB) itself
+on first start. Its healthcheck allows extra time for that first download.
+
 ---
 
 ## Step 3 — Configure environment variables
@@ -71,6 +75,7 @@ SERVER_PORT=8080
 POSTGRES_HOST=localhost
 QDRANT_URL=localhost
 OLLAMA_URL=http://localhost:11434
+RERANKER_URL=http://localhost:8082
 MINIO_ENDPOINT=localhost:9000
 
 # OIDC — defaults point at the bundled Keycloak dev realm
@@ -100,6 +105,8 @@ This starts the backing services (but **not** the API or frontend):
 - **PostgreSQL** (`:5432`) — users, workspaces, and metadata
 - **Qdrant** (`:6333`) — vector database for semantic search
 - **Ollama** (`:11434`) — local embedding and model inference
+- **Reranker** (`:8082`) — cross-encoder reranking (Hugging Face Text Embeddings
+  Inference); required, like Ollama — the API fails to start without it
 - **MinIO** (`:9000`, console `:9001`) — object storage for uploaded sources
 - **Keycloak** (`:8081`) — OIDC identity provider; the `neuralvault` realm is
   auto-imported with a seeded dev user
@@ -109,6 +116,19 @@ Check that all services are healthy:
 ```bash
 docker compose ps
 ```
+
+**Optional: NVIDIA GPU acceleration for Ollama.** By default Ollama runs CPU-only,
+which works on any machine. If you have an NVIDIA GPU, the NVIDIA driver, and the
+[NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html)
+installed, layer `docker-compose.gpu.yml` on top instead to pass the GPU through —
+larger completion models become dramatically faster:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d   # or: make up-gpu
+```
+
+Without the toolkit installed, this command fails to start the `ollama` container
+(`could not select device driver 'nvidia'`) — use plain `make up` instead.
 
 ---
 
@@ -247,6 +267,20 @@ ollama serve
 ```bash
 ollama pull nomic-embed-text
 ```
+
+**Reranker is not reachable / still starting**
+
+The `reranker` container downloads its model on first start (a few hundred MB), so
+its healthcheck can stay in `starting` for a couple of minutes. Check its status and
+logs before assuming it's broken:
+
+```bash
+docker compose ps reranker
+docker compose logs -f reranker
+```
+
+The API fails to start if the reranker isn't reachable and serving the model
+configured in `RERANKER_MODEL` — same fail-fast behavior as Ollama.
 
 **Login fails / Keycloak not ready**
 
