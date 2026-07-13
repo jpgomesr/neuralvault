@@ -58,6 +58,9 @@ func setValidEnv(t *testing.T) {
 	t.Setenv("AUTH_CLIENT_SECRET", "test-secret")
 	t.Setenv("AUTH_REDIRECT_URL", "http://localhost:8080/auth/callback")
 	t.Setenv("AUTH_SESSION_SECRET", "test-session-secret-at-least-32-bytes")
+
+	t.Setenv("RERANKER_URL", "http://localhost:8082")
+	t.Setenv("RERANKER_MODEL", "BAAI/bge-reranker-base")
 }
 
 // Ensures the validator is initialized once.
@@ -471,6 +474,8 @@ func TestLoadConfig_MissingRequiredStringFields(t *testing.T) {
 		{name: "auth client secret", envVar: "AUTH_CLIENT_SECRET", fieldName: "Auth.ClientSecret"},
 		{name: "auth redirect url", envVar: "AUTH_REDIRECT_URL", fieldName: "Auth.RedirectURL"},
 		{name: "auth session secret", envVar: "AUTH_SESSION_SECRET", fieldName: "Auth.SessionSecret"},
+		{name: "reranker url", envVar: "RERANKER_URL", fieldName: "Reranker.URL"},
+		{name: "reranker model", envVar: "RERANKER_MODEL", fieldName: "Reranker.Model"},
 	}
 
 	for _, tc := range required {
@@ -560,6 +565,8 @@ func TestLoadConfig_DotEnvLoading(t *testing.T) {
 		"AUTH_CLIENT_SECRET",
 		"AUTH_REDIRECT_URL",
 		"AUTH_SESSION_SECRET",
+		"RERANKER_URL",
+		"RERANKER_MODEL",
 	} {
 		if err := os.Unsetenv(key); err != nil {
 			t.Fatalf("failed to unset %s: %v", key, err)
@@ -593,6 +600,8 @@ func TestLoadConfig_DotEnvLoading(t *testing.T) {
 		"AUTH_CLIENT_SECRET=test-secret",
 		"AUTH_REDIRECT_URL=http://localhost:8080/auth/callback",
 		"AUTH_SESSION_SECRET=test-session-secret-at-least-32-bytes",
+		"RERANKER_URL=http://localhost:8082",
+		"RERANKER_MODEL=BAAI/bge-reranker-base",
 	}, "\n") + "\n"
 
 	envDev := "POSTGRES_PASSWORD=devpass\n"

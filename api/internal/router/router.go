@@ -17,6 +17,7 @@ import (
 	"github.com/jpgomesr/NeuralVault/internal/health"
 	"github.com/jpgomesr/NeuralVault/internal/llm"
 	"github.com/jpgomesr/NeuralVault/internal/objectstorage"
+	"github.com/jpgomesr/NeuralVault/internal/reranking"
 	"github.com/jpgomesr/NeuralVault/internal/retrieval"
 	"github.com/jpgomesr/NeuralVault/internal/sourcereader"
 	"github.com/jpgomesr/NeuralVault/internal/sources"
@@ -26,7 +27,7 @@ import (
 	httpSwagger "github.com/swaggo/http-swagger"
 )
 
-func NewRouter(cfg *config.Config, pool storage.Pool, store objectstorage.Client, embedder embedding.Embedder, vectorStore vectorstorage.Client, llmProvider llm.Provider, authService auth.Service) *chi.Mux {
+func NewRouter(cfg *config.Config, pool storage.Pool, store objectstorage.Client, embedder embedding.Embedder, vectorStore vectorstorage.Client, llmProvider llm.Provider, reranker reranking.Reranker, authService auth.Service) *chi.Mux {
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
 	// requestLogging wraps Recoverer so the "request completed" line still records
@@ -42,6 +43,7 @@ func NewRouter(cfg *config.Config, pool storage.Pool, store objectstorage.Client
 		}},
 		health.Check{Name: "minio", Fn: store.HealthCheck},
 		health.Check{Name: "ollama", Fn: embedder.HealthCheck},
+		health.Check{Name: "reranker", Fn: reranker.HealthCheck},
 		health.Check{Name: "keycloak", Fn: authService.HealthCheck},
 	)
 	healthHandler := health.NewHandler(healthService)
@@ -55,13 +57,13 @@ func NewRouter(cfg *config.Config, pool storage.Pool, store objectstorage.Client
 	workspaceService := workspaces.NewWorkspaceService(pool)
 	workspaceHandler := workspaces.NewHandler(workspaceService)
 
-	sourceService := sources.NewSourceService(pool, store, sourcereader.NewFileReader(), chunkService, bus, embedder, vectorStore, cfg.Qdrant.CollectionName, cfg.Ollama.EmbeddingModel)
+	sourceService := sources.NewSourceService(pool, store, sourcereader.NewFileReader(), chunkService, bus, embedder, vectorStore, llmProvider, cfg.Qdrant.CollectionName, cfg.Ollama.EmbeddingModel, cfg.Ollama.CompletionModel)
 	sourceHandler := sources.NewHandler(sourceService, bus, workspaceService, cfg.Server.MaxUploadBytes)
 
 	conversationService := conversations.NewConversationService(pool)
 	conversationHandler := conversations.NewHandler(conversationService, workspaceService)
 
-	retrievalService := retrieval.NewRetrievalService(pool, embedder, vectorStore, llmProvider, cfg.Qdrant.CollectionName, cfg.Ollama.CompletionModel)
+	retrievalService := retrieval.NewRetrievalService(pool, embedder, vectorStore, llmProvider, reranker, cfg.Qdrant.CollectionName, cfg.Ollama.CompletionModel)
 	retrievalHandler := retrieval.NewHandler(retrievalService, workspaceService, conversationService)
 
 	authHandler := auth.NewHandler(authService, cfg.Auth.SessionSecret, cfg.Auth.CookieSecure, cfg.Auth.PostLoginURL)

@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jpgomesr/NeuralVault/internal/conversations"
@@ -17,11 +18,13 @@ import (
 
 // fakeRetriever is a minimal test double for Retriever.
 type fakeRetriever struct {
-	results   []RetrievedChunk
-	err       error
-	gotReq    RetrieveRequest
-	streamOut []llm.StreamChunk // chunks Answer emits on its channel
-	answerErr error
+	results     []RetrievedChunk
+	err         error
+	gotReq      RetrieveRequest
+	streamOut   []llm.StreamChunk // chunks Answer emits on its channel
+	answerErr   error
+	answerDelay time.Duration // simulates slow retrieval/rerank/LLM-startup
+	tokenDelay  time.Duration // simulates a slow gap between generated tokens
 }
 
 func (f *fakeRetriever) Retrieve(_ context.Context, req RetrieveRequest) ([]RetrievedChunk, error) {
@@ -31,8 +34,24 @@ func (f *fakeRetriever) Retrieve(_ context.Context, req RetrieveRequest) ([]Retr
 
 func (f *fakeRetriever) Answer(_ context.Context, req RetrieveRequest) ([]RetrievedChunk, <-chan llm.StreamChunk, error) {
 	f.gotReq = req
+	if f.answerDelay > 0 {
+		time.Sleep(f.answerDelay)
+	}
 	if f.answerErr != nil {
 		return nil, nil, f.answerErr
+	}
+	// With tokenDelay set, emit chunks from a goroutine with a pause before
+	// each one, so the handler's inter-token heartbeat path is exercised.
+	if f.tokenDelay > 0 {
+		ch := make(chan llm.StreamChunk)
+		go func() {
+			defer close(ch)
+			for _, c := range f.streamOut {
+				time.Sleep(f.tokenDelay)
+				ch <- c
+			}
+		}()
+		return f.results, ch, nil
 	}
 	ch := make(chan llm.StreamChunk, len(f.streamOut))
 	for _, c := range f.streamOut {

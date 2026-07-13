@@ -19,6 +19,7 @@ import (
 
 	"github.com/jpgomesr/NeuralVault/internal/chunking"
 	"github.com/jpgomesr/NeuralVault/internal/embedding"
+	"github.com/jpgomesr/NeuralVault/internal/llm"
 	"github.com/jpgomesr/NeuralVault/internal/model"
 	"github.com/jpgomesr/NeuralVault/internal/objectstorage"
 	"github.com/jpgomesr/NeuralVault/internal/sourcereader"
@@ -75,15 +76,17 @@ type Service interface {
 
 // SourceService is the concrete implementation of Service.
 type SourceService struct {
-	pool           storage.Pool
-	store          objectstorage.Client
-	reader         sourcereader.Reader
-	chunker        *chunking.ChunkService
-	bus            *ProgressBus
-	embedder       embedding.Embedder
-	vectorStore    vectorstorage.Client
-	collectionName string
-	embeddingModel string
+	pool            storage.Pool
+	store           objectstorage.Client
+	reader          sourcereader.Reader
+	chunker         *chunking.ChunkService
+	bus             *ProgressBus
+	embedder        embedding.Embedder
+	vectorStore     vectorstorage.Client
+	llmProvider     llm.Provider
+	collectionName  string
+	embeddingModel  string
+	completionModel string
 }
 
 // NewSourceService constructs a SourceService.
@@ -95,19 +98,23 @@ func NewSourceService(
 	bus *ProgressBus,
 	embedder embedding.Embedder,
 	vectorStore vectorstorage.Client,
+	llmProvider llm.Provider,
 	collectionName string,
 	embeddingModel string,
+	completionModel string,
 ) *SourceService {
 	return &SourceService{
-		pool:           pool,
-		store:          store,
-		reader:         reader,
-		chunker:        chunker,
-		bus:            bus,
-		embedder:       embedder,
-		vectorStore:    vectorStore,
-		collectionName: collectionName,
-		embeddingModel: embeddingModel,
+		pool:            pool,
+		store:           store,
+		reader:          reader,
+		chunker:         chunker,
+		bus:             bus,
+		embedder:        embedder,
+		vectorStore:     vectorStore,
+		llmProvider:     llmProvider,
+		collectionName:  collectionName,
+		embeddingModel:  embeddingModel,
+		completionModel: completionModel,
 	}
 }
 
@@ -436,6 +443,8 @@ func (s *SourceService) runPipeline(ctx context.Context, source model.Source) (i
 		if err != nil {
 			return 0, fmt.Errorf("chunking %q: %w", req.FilePath, err)
 		}
+
+		chunks = s.captionStructuredChunks(ctx, chunks)
 
 		if len(chunks) > 0 {
 			embChunks := toEmbeddingChunks(chunks)

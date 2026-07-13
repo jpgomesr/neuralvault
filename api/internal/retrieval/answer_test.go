@@ -43,7 +43,7 @@ func TestAnswer_StreamsCompletion(t *testing.T) {
 	prov := &fakeProvider{stream: ch}
 
 	vs := fakeVectorStore{queryFn: emptyQuery}
-	svc := NewRetrievalService(sharedPool, fixedEmbedder{vector: vec(1.0)}, vs, prov, sharedQdrantCfg.CollectionName, "answer-model")
+	svc := NewRetrievalService(sharedPool, fixedEmbedder{vector: vec(1.0)}, vs, prov, passthroughReranker, sharedQdrantCfg.CollectionName, "answer-model")
 
 	chunks, stream, err := svc.Answer(ctx, RetrieveRequest{WorkspaceID: uuid.New(), Query: "hi"})
 	if err != nil {
@@ -64,7 +64,7 @@ func TestAnswer_StreamsCompletion(t *testing.T) {
 }
 
 func TestAnswer_RetrieveError(t *testing.T) {
-	svc := NewRetrievalService(sharedPool, failingEmbedder{}, sharedVecStore, &fakeProvider{}, sharedQdrantCfg.CollectionName, "m")
+	svc := NewRetrievalService(sharedPool, failingEmbedder{}, sharedVecStore, &fakeProvider{}, passthroughReranker, sharedQdrantCfg.CollectionName, "m")
 
 	_, _, err := svc.Answer(context.Background(), RetrieveRequest{WorkspaceID: uuid.New(), Query: "hi"})
 	if err == nil || !strings.Contains(err.Error(), "retrieving context") {
@@ -75,7 +75,7 @@ func TestAnswer_RetrieveError(t *testing.T) {
 func TestAnswer_StreamStartError(t *testing.T) {
 	prov := &fakeProvider{err: errTest("provider unavailable")}
 	vs := fakeVectorStore{queryFn: emptyQuery}
-	svc := NewRetrievalService(sharedPool, fixedEmbedder{vector: vec(1.0)}, vs, prov, sharedQdrantCfg.CollectionName, "m")
+	svc := NewRetrievalService(sharedPool, fixedEmbedder{vector: vec(1.0)}, vs, prov, passthroughReranker, sharedQdrantCfg.CollectionName, "m")
 
 	_, stream, err := svc.Answer(context.Background(), RetrieveRequest{WorkspaceID: uuid.New(), Query: "hi"})
 	if err == nil || !strings.Contains(err.Error(), "starting completion stream") {

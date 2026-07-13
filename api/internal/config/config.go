@@ -23,6 +23,7 @@ type Config struct {
 	Ollama   Ollama   `envconfig:"OLLAMA"`
 	MinIO    MinIO    `envconfig:"MINIO"`
 	Auth     Auth     `envconfig:"AUTH"`
+	Reranker Reranker `envconfig:"RERANKER"`
 }
 
 // Server contains HTTP server configuration.
@@ -85,6 +86,15 @@ type MinIO struct {
 	SecretKey string `envconfig:"SECRET_KEY"  validate:"required"`
 	Bucket    string `envconfig:"BUCKET"      validate:"required"`
 	UseSSL    bool   `envconfig:"USE_SSL"`
+}
+
+// Reranker contains cross-encoder reranking service configuration (Hugging
+// Face Text Embeddings Inference). Required like every other provider: a
+// missing/unreachable reranker fails server startup rather than silently
+// degrading retrieval quality on every query.
+type Reranker struct {
+	URL   string `envconfig:"URL" validate:"required"`
+	Model string `envconfig:"MODEL" validate:"required"`
 }
 
 // Auth contains OpenID Connect (OIDC) configuration for the authorization-code

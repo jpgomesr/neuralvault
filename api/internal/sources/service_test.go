@@ -29,6 +29,7 @@ import (
 	"github.com/jpgomesr/NeuralVault/internal/chunking/text"
 	"github.com/jpgomesr/NeuralVault/internal/config"
 	"github.com/jpgomesr/NeuralVault/internal/embedding"
+	"github.com/jpgomesr/NeuralVault/internal/llm"
 	"github.com/jpgomesr/NeuralVault/internal/model"
 	"github.com/jpgomesr/NeuralVault/internal/objectstorage"
 	minioclient "github.com/jpgomesr/NeuralVault/internal/objectstorage/minio"
@@ -55,6 +56,28 @@ func (s *stubEmbedder) EmbedBatch(_ context.Context, chunks []embedding.Chunk) (
 }
 
 func (s *stubEmbedder) HealthCheck(_ context.Context) error { return nil }
+
+// stubProvider returns a fixed completion (or a configured error).
+// It satisfies llm.Provider without requiring a running Ollama instance.
+// The empty-completion default means captionStructuredChunks skips
+// captioning (an empty, trimmed response) rather than calling out further.
+type stubProvider struct {
+	completion string
+	err        error
+	calls      int
+}
+
+func (p *stubProvider) Complete(_ context.Context, _ llm.CompletionRequest) (llm.CompletionResponse, error) {
+	p.calls++
+	if p.err != nil {
+		return llm.CompletionResponse{}, p.err
+	}
+	return llm.CompletionResponse{Content: p.completion}, nil
+}
+
+func (p *stubProvider) Stream(_ context.Context, _ llm.CompletionRequest) (<-chan llm.StreamChunk, error) {
+	return nil, errors.New("stubProvider.Stream not implemented")
+}
 
 // stubVectorStore discards all writes and returns no-op results.
 // It satisfies vectorstorage.Client without requiring a running Qdrant instance.
@@ -200,6 +223,19 @@ func (p sourceRowDeleteFailingPool) Exec(ctx context.Context, sql string, args .
 	return p.Pool.Exec(ctx, sql, args...)
 }
 
+// contentUpdateFailingPool fails the Exec used by updateChunkContent to append
+// a caption (identified by "SET content = $1"), so the caption-persist error
+// path can be exercised. Chunk INSERTs (run via the chunker's own sharedPool)
+// and the embedding_model update are unaffected.
+type contentUpdateFailingPool struct{ storage.Pool }
+
+func (p contentUpdateFailingPool) Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
+	if strings.Contains(sql, "SET content = $1") {
+		return pgconn.CommandTag{}, fmt.Errorf("injected content update failure")
+	}
+	return p.Pool.Exec(ctx, sql, args...)
+}
+
 // errReader always fails on Read, used to exercise copy-error branches.
 type errReader struct{}
 
@@ -292,8 +328,10 @@ func buildSvcWithStore(_ context.Context, t *testing.T, pool storage.Pool, store
 		NewProgressBus(),
 		&stubEmbedder{dim: 768},
 		stubVectorStore{},
+		&stubProvider{},
 		"test",
 		"nomic-embed-text",
+		"test-completion-model",
 	)
 }
 
@@ -444,8 +482,10 @@ func newSvcVS(ctx context.Context, t *testing.T, vs vectorstorage.Client) *Sourc
 		NewProgressBus(),
 		&stubEmbedder{dim: 768},
 		vs,
+		&stubProvider{},
 		"test",
 		"nomic-embed-text",
+		"test-completion-model",
 	)
 }
 
@@ -1054,10 +1094,19 @@ func TestResetStuckIndexing_Error(t *testing.T) {
 // ── Helpers for pipeline-level tests ─────────────────────────────────────────
 
 // buildCustomSvc builds a SourceService like newSvc but accepts custom pool,
-// embedder, and vector store. The object-storage field is nil because the
-// tests below call runPipeline directly, which never touches object storage.
-// The chunking service always uses sharedPool so FK constraints are satisfied.
-func buildCustomSvc(_ context.Context, t *testing.T, pool storage.Pool, emb embedding.Embedder, vs vectorstorage.Client) *SourceService {
+// embedder, and vector store, with a no-op LLM provider (captioning skips
+// silently, an empty trimmed completion). The object-storage field is nil
+// because the tests below call runPipeline directly, which never touches
+// object storage. The chunking service always uses sharedPool so FK
+// constraints are satisfied.
+func buildCustomSvc(ctx context.Context, t *testing.T, pool storage.Pool, emb embedding.Embedder, vs vectorstorage.Client) *SourceService {
+	t.Helper()
+	return buildCustomSvcWithProvider(ctx, t, pool, emb, vs, &stubProvider{})
+}
+
+// buildCustomSvcWithProvider is buildCustomSvc with an injectable LLM
+// provider, so tests can exercise chunk captioning specifically.
+func buildCustomSvcWithProvider(_ context.Context, t *testing.T, pool storage.Pool, emb embedding.Embedder, vs vectorstorage.Client, prov llm.Provider) *SourceService {
 	t.Helper()
 	splitters := map[chunking.ContentType]chunking.Splitter{
 		chunking.ContentTypeMarkdown:  markdown.New(),
@@ -1071,8 +1120,10 @@ func buildCustomSvc(_ context.Context, t *testing.T, pool storage.Pool, emb embe
 		NewProgressBus(),
 		emb,
 		vs,
+		prov,
 		"test",
 		"nomic-embed-text",
+		"test-completion-model",
 	)
 }
 
@@ -1457,5 +1508,155 @@ func TestRunPipeline_UpdateEmbeddingModelError(t *testing.T) {
 	_, err := svc.runPipeline(ctx, src)
 	if err == nil || !strings.Contains(err.Error(), "updating embedding model for") {
 		t.Fatalf("expected updateEmbeddingModel error, got: %v", err)
+	}
+}
+
+// ── Chunk captioning tests ────────────────────────────────────────────────
+
+func TestRunPipeline_CaptionsStructuredChunks(t *testing.T) {
+	ctx := context.Background()
+	wid := insertWS(ctx, t)
+	dir := makeTempDirWithFile(t, "doc.md", "# Diagram\n\n```\nBrowser -> API -> Database\n```")
+	src := insertSrcRow(ctx, t, wid, dir)
+
+	prov := &stubProvider{completion: "This diagram shows the browser connecting to the API, which connects to the database."}
+	svc := buildCustomSvcWithProvider(ctx, t, sharedPool, &stubEmbedder{dim: 768}, stubVectorStore{}, prov)
+	if _, err := svc.runPipeline(ctx, src); err != nil {
+		t.Fatalf("runPipeline: %v", err)
+	}
+	if prov.calls != 1 {
+		t.Fatalf("expected exactly 1 caption call, got %d", prov.calls)
+	}
+
+	chunks, err := svc.ListChunks(ctx, src.ID)
+	if err != nil {
+		t.Fatalf("ListChunks: %v", err)
+	}
+	if len(chunks) != 1 {
+		t.Fatalf("expected 1 chunk, got %d", len(chunks))
+	}
+	if !strings.Contains(chunks[0].Content, "Browser -> API -> Database") {
+		t.Errorf("expected original content preserved, got: %q", chunks[0].Content)
+	}
+	if !strings.Contains(chunks[0].Content, prov.completion) {
+		t.Errorf("expected caption appended to persisted content, got: %q", chunks[0].Content)
+	}
+}
+
+func TestRunPipeline_SkipsCaptioningForPlainProse(t *testing.T) {
+	ctx := context.Background()
+	wid := insertWS(ctx, t)
+	dir := makeTempDirWithFile(t, "doc.md", "# Section\nJust some plain prose, no diagram or table here.")
+	src := insertSrcRow(ctx, t, wid, dir)
+
+	prov := &stubProvider{completion: "should never be used"}
+	svc := buildCustomSvcWithProvider(ctx, t, sharedPool, &stubEmbedder{dim: 768}, stubVectorStore{}, prov)
+	if _, err := svc.runPipeline(ctx, src); err != nil {
+		t.Fatalf("runPipeline: %v", err)
+	}
+	if prov.calls != 0 {
+		t.Errorf("expected no caption calls for plain prose, got %d", prov.calls)
+	}
+}
+
+func TestRunPipeline_CaptioningFailureDoesNotFailIngest(t *testing.T) {
+	ctx := context.Background()
+	wid := insertWS(ctx, t)
+	dir := makeTempDirWithFile(t, "doc.md", "# Diagram\n\n```\nBrowser -> API\n```")
+	src := insertSrcRow(ctx, t, wid, dir)
+
+	prov := &stubProvider{err: errors.New("llm unavailable")}
+	svc := buildCustomSvcWithProvider(ctx, t, sharedPool, &stubEmbedder{dim: 768}, stubVectorStore{}, prov)
+	total, err := svc.runPipeline(ctx, src)
+	if err != nil {
+		t.Fatalf("expected runPipeline to succeed despite captioning failure, got: %v", err)
+	}
+	if total != 1 {
+		t.Errorf("expected 1 chunk still created, got %d", total)
+	}
+
+	chunks, err := svc.ListChunks(ctx, src.ID)
+	if err != nil {
+		t.Fatalf("ListChunks: %v", err)
+	}
+	if chunks[0].Content != "# Diagram\n\n```\nBrowser -> API\n```" {
+		t.Errorf("expected uncaptioned original content preserved on caption failure, got: %q", chunks[0].Content)
+	}
+}
+
+// TestRunPipeline_CaptionSkippedWhenEmpty covers the branch where the LLM is
+// called for a structured chunk but returns an empty (whitespace-only)
+// caption: generateCaption runs, but nothing is appended or persisted.
+func TestRunPipeline_CaptionSkippedWhenEmpty(t *testing.T) {
+	ctx := context.Background()
+	wid := insertWS(ctx, t)
+	dir := makeTempDirWithFile(t, "doc.md", "# Diagram\n\n```\nBrowser -> API\n```")
+	src := insertSrcRow(ctx, t, wid, dir)
+
+	prov := &stubProvider{completion: "   \n  "} // trims to empty
+	svc := buildCustomSvcWithProvider(ctx, t, sharedPool, &stubEmbedder{dim: 768}, stubVectorStore{}, prov)
+	if _, err := svc.runPipeline(ctx, src); err != nil {
+		t.Fatalf("runPipeline: %v", err)
+	}
+	if prov.calls != 1 {
+		t.Fatalf("expected the LLM to be called once for the structured chunk, got %d", prov.calls)
+	}
+
+	chunks, err := svc.ListChunks(ctx, src.ID)
+	if err != nil {
+		t.Fatalf("ListChunks: %v", err)
+	}
+	if chunks[0].Content != "# Diagram\n\n```\nBrowser -> API\n```" {
+		t.Errorf("expected original content unchanged when caption is empty, got: %q", chunks[0].Content)
+	}
+}
+
+// TestRunPipeline_CaptionPersistFailureDoesNotFailIngest covers the branch
+// where captioning succeeds but persisting the appended caption fails: the
+// failure is logged and skipped, and ingest still completes with the original
+// (uncaptioned) content.
+func TestRunPipeline_CaptionPersistFailureDoesNotFailIngest(t *testing.T) {
+	ctx := context.Background()
+	wid := insertWS(ctx, t)
+	dir := makeTempDirWithFile(t, "doc.md", "# Diagram\n\n```\nBrowser -> API\n```")
+	src := insertSrcRow(ctx, t, wid, dir)
+
+	prov := &stubProvider{completion: "A diagram of the browser calling the API."}
+	svc := buildCustomSvcWithProvider(ctx, t, contentUpdateFailingPool{Pool: sharedPool}, &stubEmbedder{dim: 768}, stubVectorStore{}, prov)
+	total, err := svc.runPipeline(ctx, src)
+	if err != nil {
+		t.Fatalf("expected runPipeline to succeed despite caption-persist failure, got: %v", err)
+	}
+	if total != 1 {
+		t.Errorf("expected 1 chunk still created, got %d", total)
+	}
+
+	chunks, err := svc.ListChunks(ctx, src.ID)
+	if err != nil {
+		t.Fatalf("ListChunks: %v", err)
+	}
+	if chunks[0].Content != "# Diagram\n\n```\nBrowser -> API\n```" {
+		t.Errorf("expected uncaptioned original content preserved on persist failure, got: %q", chunks[0].Content)
+	}
+}
+
+func TestHasStructuredContent(t *testing.T) {
+	tests := []struct {
+		name    string
+		content string
+		want    bool
+	}{
+		{"fenced code block", "some text\n```\ncode\n```\nmore text", true},
+		{"markdown table", "| A | B |\n|---|---|\n| 1 | 2 |", true},
+		{"plain prose", "Just a paragraph of plain text with no structure.", false},
+		{"single stray pipe", "a | b (not a table, just a sentence with a pipe)", false},
+		{"empty", "", false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := hasStructuredContent(tc.content); got != tc.want {
+				t.Errorf("hasStructuredContent(%q) = %v, want %v", tc.content, got, tc.want)
+			}
+		})
 	}
 }

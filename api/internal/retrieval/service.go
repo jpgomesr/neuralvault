@@ -1,6 +1,6 @@
-// Package retrieval implements the semantic search engine: it embeds a query,
-// runs a workspace-scoped search in Qdrant, and hydrates the results with
-// chunk content from Postgres.
+// Package retrieval implements the search engine: it embeds a query, runs a
+// hybrid (vector + lexical) workspace-scoped search, fuses and reranks the
+// candidates, and hydrates the results with chunk content from Postgres.
 package retrieval
 
 import (
@@ -18,6 +18,7 @@ import (
 	"github.com/jpgomesr/NeuralVault/internal/embedding"
 	"github.com/jpgomesr/NeuralVault/internal/llm"
 	"github.com/jpgomesr/NeuralVault/internal/model"
+	"github.com/jpgomesr/NeuralVault/internal/reranking"
 	"github.com/jpgomesr/NeuralVault/internal/storage"
 	"github.com/jpgomesr/NeuralVault/internal/vectorstorage"
 )
@@ -25,7 +26,29 @@ import (
 const (
 	defaultTopK = 5
 	maxTopK     = 50
+
+	// candidatePoolMultiplier and minCandidatePool size the vector and lexical
+	// candidate pools fed into fusion — wider than the final topK, so
+	// Reciprocal Rank Fusion (see Retrieve) has room to pull in a chunk that
+	// scores well lexically but falls outside the vector top-K, or vice versa.
+	candidatePoolMultiplier = 4
+	minCandidatePool        = 20
+
+	// rrfK is the Reciprocal Rank Fusion damping constant — the commonly used
+	// default from IR literature (Cormack et al.), included here as-is rather
+	// than tuned, since it's a well-established starting point.
+	rrfK = 60
 )
+
+// candidatePoolSize returns how many candidates to pull from each ranking
+// signal (vector, lexical) before fusing and truncating to topK.
+func candidatePoolSize(topK int) int {
+	pool := topK * candidatePoolMultiplier
+	if pool < minCandidatePool {
+		pool = minCandidatePool
+	}
+	return pool
+}
 
 // RetrieveRequest carries the parameters for a semantic search over a workspace's chunks.
 type RetrieveRequest struct {
@@ -36,7 +59,11 @@ type RetrieveRequest struct {
 	TopK int
 }
 
-// RetrievedChunk pairs a chunk with its similarity score from the vector search.
+// RetrievedChunk pairs a chunk with its relevance score: the cross-encoder
+// reranker's score when reranking succeeded, otherwise the vector cosine
+// similarity (0 for a chunk that was a lexical-only match). Both are
+// normalized to roughly a 0-1 scale, so the field's meaning as a display
+// "confidence" number stays consistent to callers either way.
 type RetrievedChunk struct {
 	Chunk model.Chunk
 	Score float32
@@ -56,25 +83,36 @@ type RetrievalService struct {
 	embedder        embedding.Embedder
 	vectorStore     vectorstorage.Client
 	provider        llm.Provider
+	reranker        reranking.Reranker
 	collectionName  string
 	completionModel string
 }
 
 // NewRetrievalService constructs a RetrievalService. provider and
 // completionModel back the streaming Answer flow; Retrieve does not use them.
-func NewRetrievalService(pool storage.Pool, embedder embedding.Embedder, vectorStore vectorstorage.Client, provider llm.Provider, collectionName, completionModel string) *RetrievalService {
+func NewRetrievalService(pool storage.Pool, embedder embedding.Embedder, vectorStore vectorstorage.Client, provider llm.Provider, reranker reranking.Reranker, collectionName, completionModel string) *RetrievalService {
 	return &RetrievalService{
 		pool:            pool,
 		embedder:        embedder,
 		vectorStore:     vectorStore,
 		provider:        provider,
+		reranker:        reranker,
 		collectionName:  collectionName,
 		completionModel: completionModel,
 	}
 }
 
-// Retrieve embeds req.Query, runs a workspace-scoped semantic search in Qdrant,
-// and returns the top-k matching chunks ordered by descending similarity score.
+// Retrieve embeds req.Query, runs a workspace-scoped semantic search in
+// Qdrant plus a lexical full-text search in Postgres, fuses the two ranked
+// candidate lists via Reciprocal Rank Fusion, reranks the fused set with a
+// cross-encoder, and returns the top-k chunks. The lexical signal exists
+// because pure vector similarity systematically under-ranks structurally
+// "dense" content (tables, diagrams) relative to short generic prose, even
+// when the dense content literally contains the query's terms. Reranking
+// exists because hybrid fusion still can't catch a chunk that's genuinely
+// relevant but shares no literal vocabulary with the query at all — a
+// cross-encoder that jointly attends to (query, chunk) pairs can make that
+// semantic connection where cosine and lexical scores both come up empty.
 func (s *RetrievalService) Retrieve(ctx context.Context, req RetrieveRequest) ([]RetrievedChunk, error) {
 	topK := req.TopK
 	if topK <= 0 {
@@ -83,6 +121,7 @@ func (s *RetrievalService) Retrieve(ctx context.Context, req RetrieveRequest) ([
 	if topK > maxTopK {
 		topK = maxTopK
 	}
+	pool := candidatePoolSize(topK)
 
 	vector, err := s.embedder.Embed(ctx, req.Query)
 	if err != nil {
@@ -96,7 +135,7 @@ func (s *RetrievalService) Retrieve(ctx context.Context, req RetrieveRequest) ([
 		Filter: &qdrantpb.Filter{
 			Must: []*qdrantpb.Condition{qdrantpb.NewMatch("workspace_id", req.WorkspaceID.String())},
 		},
-		Limit:       qdrantpb.PtrOf(uint64(topK)),
+		Limit:       qdrantpb.PtrOf(uint64(pool)),
 		WithPayload: qdrantpb.NewWithPayload(true),
 	})
 	if err != nil {
@@ -105,27 +144,59 @@ func (s *RetrievalService) Retrieve(ctx context.Context, req RetrieveRequest) ([
 	}
 	slog.DebugContext(ctx, "qdrant query completed",
 		"workspace_id", req.WorkspaceID,
-		"top_k", topK,
+		"pool_size", pool,
 		"result_count", len(scoredPoints),
 		"duration_ms", time.Since(start).Milliseconds(),
 	)
-	if len(scoredPoints) == 0 {
-		slog.InfoContext(ctx, "no matches found", "workspace_id", req.WorkspaceID)
-		return []RetrievedChunk{}, nil
-	}
 
-	ids := make([]uuid.UUID, 0, len(scoredPoints))
-	scores := make(map[uuid.UUID]float32, len(scoredPoints))
-	rank := make(map[uuid.UUID]int, len(scoredPoints))
+	vectorIDs := make([]uuid.UUID, 0, len(scoredPoints))
+	vectorScores := make(map[uuid.UUID]float32, len(scoredPoints))
+	vectorRank := make(map[uuid.UUID]int, len(scoredPoints))
 	for i, p := range scoredPoints {
 		rawID := p.GetId().GetUuid()
 		id, err := uuid.Parse(rawID)
 		if err != nil {
 			return nil, fmt.Errorf("parsing point id %q: %w", rawID, err)
 		}
-		ids = append(ids, id)
-		scores[id] = p.GetScore()
-		rank[id] = i
+		vectorIDs = append(vectorIDs, id)
+		vectorScores[id] = p.GetScore()
+		vectorRank[id] = i
+	}
+
+	lexicalIDs, err := s.lexicalSearch(ctx, req.WorkspaceID, req.Query, pool)
+	if err != nil {
+		return nil, fmt.Errorf("lexical search: %w", err)
+	}
+	lexicalRank := make(map[uuid.UUID]int, len(lexicalIDs))
+	for i, id := range lexicalIDs {
+		lexicalRank[id] = i
+	}
+
+	if len(vectorIDs) == 0 && len(lexicalIDs) == 0 {
+		slog.InfoContext(ctx, "no matches found", "workspace_id", req.WorkspaceID)
+		return []RetrievedChunk{}, nil
+	}
+
+	// Union the two candidate lists (vector first) and fuse each chunk's
+	// per-list rank into a single score via Reciprocal Rank Fusion. ids'
+	// insertion order also serves as a deterministic tie-breaker below, since
+	// Postgres row order from loadChunks is not guaranteed to match it.
+	ids := make([]uuid.UUID, 0, len(vectorIDs)+len(lexicalIDs))
+	idsIndex := make(map[uuid.UUID]int, len(vectorIDs)+len(lexicalIDs))
+	fused := make(map[uuid.UUID]float64, len(vectorIDs)+len(lexicalIDs))
+	for _, id := range vectorIDs {
+		if _, ok := idsIndex[id]; !ok {
+			idsIndex[id] = len(ids)
+			ids = append(ids, id)
+		}
+		fused[id] += 1.0 / float64(rrfK+vectorRank[id]+1)
+	}
+	for _, id := range lexicalIDs {
+		if _, ok := idsIndex[id]; !ok {
+			idsIndex[id] = len(ids)
+			ids = append(ids, id)
+		}
+		fused[id] += 1.0 / float64(rrfK+lexicalRank[id]+1)
 	}
 
 	chunks, err := s.loadChunks(ctx, ids)
@@ -134,26 +205,83 @@ func (s *RetrievalService) Retrieve(ctx context.Context, req RetrieveRequest) ([
 	}
 
 	// Filtering on WorkspaceID again is defense-in-depth: it should already be
-	// guaranteed by the Qdrant filter above, but a chunk row is never returned
-	// to a caller outside its workspace even if that filter were ever wrong.
+	// guaranteed by the Qdrant filter and lexicalSearch's WHERE clause above,
+	// but a chunk row is never returned to a caller outside its workspace even
+	// if either filter were ever wrong.
 	results := make([]RetrievedChunk, 0, len(chunks))
 	for _, chunk := range chunks {
 		if chunk.WorkspaceID != req.WorkspaceID {
 			continue
 		}
-		results = append(results, RetrievedChunk{Chunk: chunk, Score: scores[chunk.ID]})
+		// Score starts as the chunk's vector cosine similarity (0 if it was
+		// lexical-only) — rerank overwrites it with the reranker's relevance
+		// score if reranking succeeds. The internal RRF fusion score is never
+		// surfaced here; it's on a different, much smaller scale and only
+		// meaningful as this function's own relative ranking signal.
+		results = append(results, RetrievedChunk{Chunk: chunk, Score: vectorScores[chunk.ID]})
 	}
 	sort.Slice(results, func(i, j int) bool {
-		return rank[results[i].Chunk.ID] < rank[results[j].Chunk.ID]
+		a, b := results[i].Chunk.ID, results[j].Chunk.ID
+		if fused[a] != fused[b] {
+			return fused[a] > fused[b]
+		}
+		return idsIndex[a] < idsIndex[b]
 	})
+
+	results = s.rerank(ctx, req.Query, results)
+
+	if len(results) > topK {
+		results = results[:topK]
+	}
 
 	return results, nil
 }
 
+// rerank scores candidates (already sorted by fused hybrid rank) against
+// query with the cross-encoder reranker, re-sorts by that score, and
+// overwrites each RetrievedChunk's Score with it. If the reranker errors, it
+// logs a warning and returns candidates unchanged — a degraded (hybrid-only)
+// ranking is preferable to failing the whole request over a reranker hiccup.
+func (s *RetrievalService) rerank(ctx context.Context, query string, candidates []RetrievedChunk) []RetrievedChunk {
+	if len(candidates) == 0 {
+		return candidates
+	}
+
+	rerankInput := make([]reranking.Candidate, len(candidates))
+	for i, c := range candidates {
+		rerankInput[i] = reranking.Candidate{ID: c.Chunk.ID.String(), Text: c.Chunk.Content}
+	}
+
+	rerankResults, err := s.reranker.Rerank(ctx, query, rerankInput)
+	if err != nil {
+		slog.WarnContext(ctx, "reranking failed, falling back to hybrid ranking", "err", err)
+		return candidates
+	}
+
+	scoreByID := make(map[string]float32, len(rerankResults))
+	for _, r := range rerankResults {
+		scoreByID[r.CandidateID] = r.Score
+	}
+
+	sort.SliceStable(candidates, func(i, j int) bool {
+		return scoreByID[candidates[i].Chunk.ID.String()] > scoreByID[candidates[j].Chunk.ID.String()]
+	})
+	for i := range candidates {
+		candidates[i].Score = scoreByID[candidates[i].Chunk.ID.String()]
+	}
+
+	return candidates
+}
+
 // systemPrompt frames the assistant so it answers strictly from the retrieved
 // context and admits when the context is insufficient, rather than inventing.
-const systemPrompt = "You are NeuralVault's assistant. Answer the user's question using ONLY the provided context. " +
-	"If the context does not contain the answer, say you don't know. Be concise and cite nothing outside the context."
+// The numbered context blocks are for the model's internal reference only —
+// sources are surfaced to the user separately by the caller, so the model
+// must never echo the "[N]" markers or quote the raw blocks back.
+const systemPrompt = "You are NeuralVault's assistant. Answer the user's question using ONLY the information in the numbered context blocks below. " +
+	"Write a direct, natural-language answer in the same language as the question. " +
+	"Do not quote or repeat the context blocks verbatim, do not reference their \"[N]\" numbers, and do not describe or analyze the context itself — just answer the question. " +
+	"If the context does not contain the answer, say so concisely instead of guessing."
 
 // Answer runs retrieval for req, then streams a grounded LLM completion built
 // from the retrieved chunks. It returns the chunks (so the caller can surface
@@ -192,6 +320,39 @@ func buildMessages(question string, chunks []RetrievedChunk) []llm.Message {
 		{Role: llm.RoleSystem, Content: systemPrompt},
 		{Role: llm.RoleUser, Content: b.String()},
 	}
+}
+
+// lexicalSearch returns chunk IDs for workspaceID whose content matches
+// query's terms, ranked by Postgres full-text relevance (ts_rank) against the
+// generated content_tsv column, most relevant first. An empty result (not an
+// error) is the normal outcome when query shares no terms with any chunk —
+// lexical search is a complement to vector search, not a replacement.
+func (s *RetrievalService) lexicalSearch(ctx context.Context, workspaceID uuid.UUID, query string, limit int) ([]uuid.UUID, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id
+		FROM chunks
+		WHERE workspace_id = $1 AND content_tsv @@ plainto_tsquery('simple', $2)
+		ORDER BY ts_rank(content_tsv, plainto_tsquery('simple', $2)) DESC
+		LIMIT $3`,
+		workspaceID, query, limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("querying chunks by full-text search: %w", err)
+	}
+	defer rows.Close()
+
+	var ids []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scanning chunk id: %w", err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating chunk id rows: %w", err)
+	}
+	return ids, nil
 }
 
 // loadChunks batch-fetches chunks by ID. Row order is not guaranteed to match

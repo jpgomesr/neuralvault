@@ -7,13 +7,26 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jpgomesr/NeuralVault/internal/conversations"
+	"github.com/jpgomesr/NeuralVault/internal/llm"
 	"github.com/jpgomesr/NeuralVault/internal/logger"
 	"github.com/jpgomesr/NeuralVault/internal/model"
 	"github.com/jpgomesr/NeuralVault/internal/workspaces"
 )
+
+// sseHeartbeatInterval bounds how long the SSE stream can stay silent while
+// waiting on slow work (Answer's retrieval/rerank/LLM-startup, or a gap
+// between generated tokens). The frontend's Next.js rewrite proxy
+// (web/next.config.mjs) kills a connection after roughly 30s of no bytes
+// flowing, even after the response has already started — a comment line at
+// half that interval keeps it well clear. SSE comment lines (no "event:"/
+// "data:" prefix) are silently ignored by dispatchSSE on the frontend (see
+// web/lib/api/query.ts). Var, not const, so tests can shrink it instead of
+// waiting out the real interval.
+var sseHeartbeatInterval = 15 * time.Second
 
 // queryRequest is the JSON body accepted by POST /query.
 type queryRequest struct {
@@ -205,32 +218,81 @@ func (h *Handler) QueryStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Run retrieval and start the completion stream before writing SSE headers,
-	// so a failure here can still return a plain error status.
-	chunks, stream, err := h.service.Answer(r.Context(), RetrieveRequest{
-		WorkspaceID: req.WorkspaceID,
-		Query:       req.Question,
-		TopK:        req.TopK,
-	})
-	if err != nil {
-		slog.ErrorContext(r.Context(), "answer failed", "err", err, "workspace_id", req.WorkspaceID, "request_id", logger.RequestID(r.Context()))
-		http.Error(w, "failed to run query: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
+	// Clear the write deadline so the server's WriteTimeout (120s default)
+	// doesn't cut off this stream regardless of how long Answer() or token
+	// generation takes — heartbeats alone only defeat a downstream proxy's
+	// idle-connection detection, not this server's own fixed per-request
+	// deadline. Same pattern as the sources status stream. Ignore ErrNotSupported.
+	_ = http.NewResponseController(w).SetWriteDeadline(time.Time{})
 
-	// Persist the question before writing SSE headers, so a failure here can
-	// still return a plain error status instead of corrupting an open stream.
-	if req.ConversationID != nil {
-		if _, err := h.conversations.AppendMessage(r.Context(), *req.ConversationID, model.MessageRoleUser, req.Question, nil); err != nil {
-			slog.ErrorContext(r.Context(), "persisting question failed", "err", err, "conversation_id", *req.ConversationID, "request_id", logger.RequestID(r.Context()))
-			http.Error(w, "failed to persist message: "+err.Error(), http.StatusInternalServerError)
-			return
-		}
-	}
-
+	// Send SSE headers and flush immediately, before the potentially slow
+	// retrieval/rerank/LLM-startup work in Answer(). The frontend's Next.js
+	// rewrite proxy (web/next.config.mjs) enforces a hard, non-configurable
+	// 30s timeout waiting for the first response byte — without an early
+	// flush here, a slow reranker call or a cold-starting LLM can silently
+	// exceed that budget and get the connection killed before anything is
+	// ever sent. Every failure from this point on is reported as an SSE
+	// "error" event instead of an HTTP error status, since the 200 response
+	// is already committed.
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
+	w.WriteHeader(http.StatusOK)
+	flusher.Flush()
+
+	// Answer() (retrieval, hybrid fusion, reranking, and starting the LLM
+	// connection) can legitimately take tens of seconds — a cold-loading
+	// local model in particular. Run it in a goroutine and send a heartbeat
+	// on the SSE stream while waiting, or the proxy in front of this API
+	// kills the connection well before Answer() would otherwise return.
+	type answerResult struct {
+		chunks []RetrievedChunk
+		stream <-chan llm.StreamChunk
+		err    error
+	}
+	answerCh := make(chan answerResult, 1)
+	go func() {
+		chunks, stream, err := h.service.Answer(r.Context(), RetrieveRequest{
+			WorkspaceID: req.WorkspaceID,
+			Query:       req.Question,
+			TopK:        req.TopK,
+		})
+		answerCh <- answerResult{chunks: chunks, stream: stream, err: err}
+	}()
+
+	var ar answerResult
+	heartbeat := time.NewTicker(sseHeartbeatInterval)
+waitForAnswer:
+	for {
+		select {
+		case ar = <-answerCh:
+			break waitForAnswer
+		case <-heartbeat.C:
+			fmt.Fprint(w, ": keep-alive\n\n") //nolint:errcheck
+			flusher.Flush()
+		case <-r.Context().Done():
+			heartbeat.Stop()
+			return
+		}
+	}
+	heartbeat.Stop()
+
+	chunks, stream, err := ar.chunks, ar.stream, ar.err
+	if err != nil {
+		slog.ErrorContext(r.Context(), "answer failed", "err", err, "workspace_id", req.WorkspaceID, "request_id", logger.RequestID(r.Context()))
+		writeSSEEvent(w, "error", map[string]string{"error": "failed to run query: " + err.Error()})
+		flusher.Flush()
+		return
+	}
+
+	if req.ConversationID != nil {
+		if _, err := h.conversations.AppendMessage(r.Context(), *req.ConversationID, model.MessageRoleUser, req.Question, nil); err != nil {
+			slog.ErrorContext(r.Context(), "persisting question failed", "err", err, "conversation_id", *req.ConversationID, "request_id", logger.RequestID(r.Context()))
+			writeSSEEvent(w, "error", map[string]string{"error": "failed to persist message: " + err.Error()})
+			flusher.Flush()
+			return
+		}
+	}
 
 	// Surface the grounding sources up front so the UI can render them while the
 	// answer streams in.
@@ -246,30 +308,48 @@ func (h *Handler) QueryStream(w http.ResponseWriter, r *http.Request) {
 	writeSSEEvent(w, "sources", queryResponse{Results: items})
 	flusher.Flush()
 
+	// A select loop rather than a plain "for chunk := range stream": a gap
+	// between generated tokens (e.g. a slow model under load) is exactly as
+	// capable of tripping the proxy's idle-connection timeout as the wait for
+	// Answer() above, so it needs the same heartbeat treatment.
 	var answer strings.Builder
-	for chunk := range stream {
-		if chunk.Error != nil {
-			slog.ErrorContext(r.Context(), "completion stream error", "err", chunk.Error, "workspace_id", req.WorkspaceID, "request_id", logger.RequestID(r.Context()))
-			writeSSEEvent(w, "error", map[string]string{"error": chunk.Error.Error()})
-			flusher.Flush()
-			// A partial answer isn't persisted — only completed turns are.
-			return
-		}
-		if chunk.Content != "" {
-			answer.WriteString(chunk.Content)
-			writeSSEEvent(w, "token", map[string]string{"content": chunk.Content})
-			flusher.Flush()
-		}
-		if chunk.Done {
-			writeSSEEvent(w, "done", map[string]any{})
-			flusher.Flush()
-			// SSE headers are already flushed, so a persistence failure here
-			// can only be logged, not turned into an HTTP error response.
-			if req.ConversationID != nil {
-				if _, err := h.conversations.AppendMessage(r.Context(), *req.ConversationID, model.MessageRoleAssistant, answer.String(), sourcesPayload); err != nil {
-					slog.ErrorContext(r.Context(), "persisting answer failed", "err", err, "conversation_id", *req.ConversationID, "request_id", logger.RequestID(r.Context()))
-				}
+	tokenHeartbeat := time.NewTicker(sseHeartbeatInterval)
+	defer tokenHeartbeat.Stop()
+	for {
+		select {
+		case chunk, ok := <-stream:
+			if !ok {
+				return
 			}
+			tokenHeartbeat.Reset(sseHeartbeatInterval)
+			if chunk.Error != nil {
+				slog.ErrorContext(r.Context(), "completion stream error", "err", chunk.Error, "workspace_id", req.WorkspaceID, "request_id", logger.RequestID(r.Context()))
+				writeSSEEvent(w, "error", map[string]string{"error": chunk.Error.Error()})
+				flusher.Flush()
+				// A partial answer isn't persisted — only completed turns are.
+				return
+			}
+			if chunk.Content != "" {
+				answer.WriteString(chunk.Content)
+				writeSSEEvent(w, "token", map[string]string{"content": chunk.Content})
+				flusher.Flush()
+			}
+			if chunk.Done {
+				writeSSEEvent(w, "done", map[string]any{})
+				flusher.Flush()
+				// SSE headers are already flushed, so a persistence failure here
+				// can only be logged, not turned into an HTTP error response.
+				if req.ConversationID != nil {
+					if _, err := h.conversations.AppendMessage(r.Context(), *req.ConversationID, model.MessageRoleAssistant, answer.String(), sourcesPayload); err != nil {
+						slog.ErrorContext(r.Context(), "persisting answer failed", "err", err, "conversation_id", *req.ConversationID, "request_id", logger.RequestID(r.Context()))
+					}
+				}
+				return
+			}
+		case <-tokenHeartbeat.C:
+			fmt.Fprint(w, ": keep-alive\n\n") //nolint:errcheck
+			flusher.Flush()
+		case <-r.Context().Done():
 			return
 		}
 	}
