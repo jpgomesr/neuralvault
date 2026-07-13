@@ -268,7 +268,7 @@ waitForAnswer:
 		case ar = <-answerCh:
 			break waitForAnswer
 		case <-heartbeat.C:
-			fmt.Fprint(w, ": keep-alive\n\n")
+			fmt.Fprint(w, ": keep-alive\n\n") //nolint:errcheck
 			flusher.Flush()
 		case <-r.Context().Done():
 			heartbeat.Stop()
@@ -347,7 +347,7 @@ waitForAnswer:
 				return
 			}
 		case <-tokenHeartbeat.C:
-			fmt.Fprint(w, ": keep-alive\n\n")
+			fmt.Fprint(w, ": keep-alive\n\n") //nolint:errcheck
 			flusher.Flush()
 		case <-r.Context().Done():
 			return
