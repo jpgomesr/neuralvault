@@ -733,6 +733,65 @@ func TestGetFileContent_DefaultsContentType(t *testing.T) {
 	if ct := w.Header().Get("Content-Type"); ct != "application/octet-stream" {
 		t.Errorf("expected octet-stream fallback, got %q", ct)
 	}
+	// Unknown types are served as attachments so opening the raw URL downloads
+	// rather than letting the browser sniff and render them.
+	if cd := w.Header().Get("Content-Disposition"); !strings.HasPrefix(cd, "attachment") {
+		t.Errorf("expected attachment disposition for octet-stream, got %q", cd)
+	}
+	if xcto := w.Header().Get("X-Content-Type-Options"); xcto != "nosniff" {
+		t.Errorf("expected nosniff, got %q", xcto)
+	}
+}
+
+// getFileContent drives GetFileContent for a file served with the given content
+// type and returns the recorder for header assertions.
+func getFileContent(t *testing.T, fileType string) *httptest.ResponseRecorder {
+	t.Helper()
+	src := sourceWithStatus(model.SourceStatusIndexed)
+	h := NewHandler(&fakeService{source: src, fileContent: "data", fileType: fileType}, NewProgressBus(), allowMembers(), testMaxUpload)
+
+	r := routedRequest(http.MethodGet, "/sources/"+src.ID.String()+"/files/content?path=file",
+		map[string]string{"id": src.ID.String()}, nil)
+	w := httptest.NewRecorder()
+	h.GetFileContent(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	return w
+}
+
+func TestGetFileContent_Disposition(t *testing.T) {
+	// Active document types that can execute script on the app origin must be
+	// served as attachments; only non-SVG images and PDFs stay inline so the
+	// frontend's <img>/<iframe> previews keep working. SVG is an image but can
+	// carry inline scripts, so it is treated as unsafe.
+	cases := []struct {
+		name        string
+		contentType string
+		want        string
+	}{
+		{"html", "text/html", "attachment"},
+		{"html with charset", "text/html; charset=utf-8", "attachment"},
+		{"svg", "image/svg+xml", "attachment"},
+		{"xhtml", "application/xhtml+xml", "attachment"},
+		{"unparseable", "image/png; charset", "attachment"}, // ParseMediaType error → unsafe
+		{"png", "image/png", "inline"},
+		{"pdf", "application/pdf", "inline"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := getFileContent(t, tc.contentType)
+			if cd := w.Header().Get("Content-Disposition"); !strings.HasPrefix(cd, tc.want) {
+				t.Errorf("content type %q: expected %q disposition, got %q", tc.contentType, tc.want, cd)
+			}
+			// nosniff must be set regardless of disposition so the browser can't
+			// sniff the declared type into something executable.
+			if xcto := w.Header().Get("X-Content-Type-Options"); xcto != "nosniff" {
+				t.Errorf("content type %q: expected nosniff, got %q", tc.contentType, xcto)
+			}
+		})
+	}
 }
 
 // ── StreamStatus ─────────────────────────────────────────────────────────────
