@@ -100,7 +100,13 @@ func TestComplete_Success(t *testing.T) {
 // out of the messages array.
 func TestComplete_SystemPromptIsLiftedOutOfMessages(t *testing.T) {
 	var got struct {
-		System   string `json:"system"`
+		System []struct {
+			Type         string `json:"type"`
+			Text         string `json:"text"`
+			CacheControl *struct {
+				Type string `json:"type"`
+			} `json:"cache_control"`
+		} `json:"system"`
 		Messages []struct {
 			Role    string `json:"role"`
 			Content string `json:"content"`
@@ -127,8 +133,14 @@ func TestComplete_SystemPromptIsLiftedOutOfMessages(t *testing.T) {
 		t.Fatalf("Complete: %v", err)
 	}
 
-	if got.System != "be terse" {
-		t.Errorf("system = %q, want %q", got.System, "be terse")
+	if len(got.System) != 1 || got.System[0].Text != "be terse" {
+		t.Fatalf("system = %+v, want a single block with text %q", got.System, "be terse")
+	}
+	// The system prompt is identical on every request NeuralVault ever sends,
+	// so it must always be marked cacheable — this is the whole reason it's a
+	// content-block array instead of a plain string.
+	if got.System[0].CacheControl == nil || got.System[0].CacheControl.Type != "ephemeral" {
+		t.Errorf("cache_control = %+v, want {type: ephemeral}", got.System[0].CacheControl)
 	}
 	if len(got.Messages) != 1 || got.Messages[0].Role != "user" {
 		t.Errorf("messages = %+v, want only the user turn", got.Messages)
@@ -137,6 +149,30 @@ func TestComplete_SystemPromptIsLiftedOutOfMessages(t *testing.T) {
 	// must still send a default.
 	if got.MaxTokens <= 0 {
 		t.Errorf("max_tokens = %d, want a positive default", got.MaxTokens)
+	}
+}
+
+// No system prompt means nothing to cache: the field must be omitted rather
+// than sent as an empty array, matching the previous plain-string contract.
+func TestComplete_NoSystemPromptOmitsSystemField(t *testing.T) {
+	raw := map[string]any{}
+
+	client := newTestClient(t, "/v1/messages", func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
+			t.Errorf("decoding request: %v", err)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"content": []map[string]any{{"type": "text", "text": "ok"}},
+		})
+	})
+
+	_, err := client.Complete(context.Background(), basicRequest())
+	if err != nil {
+		t.Fatalf("Complete: %v", err)
+	}
+
+	if _, ok := raw["system"]; ok {
+		t.Errorf(`request body has a "system" key, want it omitted: %v`, raw)
 	}
 }
 

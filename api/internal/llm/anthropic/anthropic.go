@@ -72,11 +72,47 @@ type messagesRequest struct {
 	Model     string    `json:"model"`
 	Messages  []message `json:"messages"`
 	MaxTokens int       `json:"max_tokens"`
-	System    string    `json:"system,omitempty"`
+	// System is a content-block array, not a plain string, so it can carry a
+	// cache_control marker — see systemBlocks.
+	System []systemBlock `json:"system,omitempty"`
 	// Temperature is a pointer so an unset value is omitted rather than sent as
 	// 0, which Anthropic would read as fully deterministic sampling.
 	Temperature *float32 `json:"temperature,omitempty"`
 	Stream      bool     `json:"stream,omitempty"`
+}
+
+type systemBlock struct {
+	Type         string        `json:"type"`
+	Text         string        `json:"text"`
+	CacheControl *cacheControl `json:"cache_control,omitempty"`
+}
+
+type cacheControl struct {
+	Type string `json:"type"`
+}
+
+// systemBlocks wraps the system prompt as a single content block marked
+// cacheable ("ephemeral": Anthropic's only cache lifetime option today).
+//
+// NeuralVault's system prompt (retrieval.systemPrompt) is identical across
+// every request, for every workspace — the retrieved context and question vary,
+// but the instructions framing the model never do. That makes it the one part
+// of the prompt worth caching: Anthropic charges a premium (~1.25x) to write a
+// cache entry but a fraction (~0.1x) to read one back, and every request from
+// any workspace within the entry's TTL reuses the same write.
+//
+// Below Anthropic's per-model minimum cacheable length (1024–2048 tokens
+// depending on model) the marker is silently ignored, never an error, so this
+// is safe to send unconditionally even for a short system prompt.
+func systemBlocks(system string) []systemBlock {
+	if system == "" {
+		return nil
+	}
+	return []systemBlock{{
+		Type:         "text",
+		Text:         system,
+		CacheControl: &cacheControl{Type: "ephemeral"},
+	}}
 }
 
 type usage struct {
@@ -128,7 +164,7 @@ func newMessagesRequest(req types.CompletionRequest, model string, stream bool) 
 		Model:     model,
 		Messages:  turns,
 		MaxTokens: maxTokens,
-		System:    system,
+		System:    systemBlocks(system),
 		Stream:    stream,
 	}
 
