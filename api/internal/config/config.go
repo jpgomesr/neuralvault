@@ -24,6 +24,7 @@ type Config struct {
 	MinIO    MinIO    `envconfig:"MINIO"`
 	Auth     Auth     `envconfig:"AUTH"`
 	Reranker Reranker `envconfig:"RERANKER"`
+	Secrets  Secrets  `envconfig:"SECRETS"`
 }
 
 // Server contains HTTP server configuration.
@@ -95,6 +96,18 @@ type MinIO struct {
 type Reranker struct {
 	URL   string `envconfig:"URL" validate:"required"`
 	Model string `envconfig:"MODEL" validate:"required"`
+}
+
+// Secrets contains the master key used to encrypt secrets at rest, currently
+// the per-workspace provider API keys behind BYOK (see internal/crypto).
+type Secrets struct {
+	// EncryptionKey is a base64-encoded 32-byte key (AES-256-GCM). The length
+	// is validated as the *encoded* form: 32 raw bytes is always 44 base64
+	// characters. Generate one with `openssl rand -base64 32`.
+	//
+	// Rotating this key makes every stored API key undecryptable; workspaces
+	// must re-enter them.
+	EncryptionKey string `envconfig:"ENCRYPTION_KEY" validate:"required,len=44"`
 }
 
 // Auth contains OpenID Connect (OIDC) configuration for the authorization-code

@@ -61,7 +61,14 @@ func setValidEnv(t *testing.T) {
 
 	t.Setenv("RERANKER_URL", "http://localhost:8082")
 	t.Setenv("RERANKER_MODEL", "BAAI/bge-reranker-base")
+
+	t.Setenv("SECRETS_ENCRYPTION_KEY", testEncryptionKey)
 }
+
+// testEncryptionKey is a valid base64-encoded 32-byte AES key. The validator
+// enforces the encoded length (44 characters), so a shorter placeholder would
+// fail config validation rather than the test it appears in.
+const testEncryptionKey = "ZGV2LW9ubHkta2V5LWRvLW5vdC11c2UtaW4tcHJvZCE="
 
 // Ensures the validator is initialized once.
 func TestGetValidator_Singleton(t *testing.T) {
@@ -476,6 +483,7 @@ func TestLoadConfig_MissingRequiredStringFields(t *testing.T) {
 		{name: "auth session secret", envVar: "AUTH_SESSION_SECRET", fieldName: "Auth.SessionSecret"},
 		{name: "reranker url", envVar: "RERANKER_URL", fieldName: "Reranker.URL"},
 		{name: "reranker model", envVar: "RERANKER_MODEL", fieldName: "Reranker.Model"},
+		{name: "secrets encryption key", envVar: "SECRETS_ENCRYPTION_KEY", fieldName: "Secrets.EncryptionKey"},
 	}
 
 	for _, tc := range required {
@@ -567,6 +575,7 @@ func TestLoadConfig_DotEnvLoading(t *testing.T) {
 		"AUTH_SESSION_SECRET",
 		"RERANKER_URL",
 		"RERANKER_MODEL",
+		"SECRETS_ENCRYPTION_KEY",
 	} {
 		if err := os.Unsetenv(key); err != nil {
 			t.Fatalf("failed to unset %s: %v", key, err)
@@ -602,6 +611,7 @@ func TestLoadConfig_DotEnvLoading(t *testing.T) {
 		"AUTH_SESSION_SECRET=test-session-secret-at-least-32-bytes",
 		"RERANKER_URL=http://localhost:8082",
 		"RERANKER_MODEL=BAAI/bge-reranker-base",
+		"SECRETS_ENCRYPTION_KEY=" + testEncryptionKey,
 	}, "\n") + "\n"
 
 	envDev := "POSTGRES_PASSWORD=devpass\n"
