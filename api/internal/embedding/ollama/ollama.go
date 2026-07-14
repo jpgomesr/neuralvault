@@ -30,10 +30,17 @@ type Client struct {
 // available on the Ollama server before returning, so callers fail fast
 // instead of discovering a missing model on the first real embed request.
 func New(ctx context.Context, cfg *config.Config) (*Client, error) {
+	return NewWithModel(ctx, cfg.Ollama.URL, cfg.Ollama.EmbeddingModel)
+}
+
+// NewWithModel is New for a model chosen at runtime rather than from the
+// environment — the path a workspace takes when it selects an Ollama embedding
+// model in the UI. The same fail-fast model check applies.
+func NewWithModel(ctx context.Context, baseURL, model string) (*Client, error) {
 	c := &Client{
 		httpClient: &http.Client{Timeout: defaultHTTPTimeout},
-		baseURL:    cfg.Ollama.URL,
-		model:      cfg.Ollama.EmbeddingModel,
+		baseURL:    strings.TrimSuffix(baseURL, "/"),
+		model:      model,
 	}
 
 	if err := c.ensureModelAvailable(ctx); err != nil {

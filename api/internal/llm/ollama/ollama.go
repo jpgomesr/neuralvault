@@ -32,10 +32,18 @@ type Client struct {
 // http.Client.Timeout covers the entire response body read, which would
 // truncate a long-running stream. Callers control duration via ctx instead.
 func New(ctx context.Context, cfg *config.Config) (*Client, error) {
+	return NewWithModel(ctx, cfg.Ollama.URL, cfg.Ollama.CompletionModel)
+}
+
+// NewWithModel is New for a model chosen at runtime rather than from the
+// environment — the path a workspace takes when it selects an Ollama model in
+// the UI. The same fail-fast model check applies, so selecting a model that has
+// not been pulled is reported immediately instead of on the first query.
+func NewWithModel(ctx context.Context, baseURL, model string) (*Client, error) {
 	c := &Client{
 		httpClient:   &http.Client{},
-		baseURL:      cfg.Ollama.URL,
-		defaultModel: cfg.Ollama.CompletionModel,
+		baseURL:      strings.TrimSuffix(baseURL, "/"),
+		defaultModel: model,
 	}
 
 	if err := c.ensureModelAvailable(ctx); err != nil {
@@ -46,34 +54,59 @@ func New(ctx context.Context, cfg *config.Config) (*Client, error) {
 	return c, nil
 }
 
+// ListModels returns the models pulled on the Ollama server.
+func (c *Client) ListModels(ctx context.Context) ([]types.ModelInfo, error) {
+	tags, err := c.fetchTags(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	models := make([]types.ModelInfo, 0, len(tags.Models))
+	for _, m := range tags.Models {
+		models = append(models, types.ModelInfo{ID: m.Name, Name: m.Name})
+	}
+	return models, nil
+}
+
 type tagsResponse struct {
 	Models []struct {
 		Name string `json:"name"`
 	} `json:"models"`
 }
 
-// ensureModelAvailable confirms the configured completion model has already
-// been pulled on the Ollama server, matching either the bare model name or
-// its default ":latest"-suffixed tag.
-func (c *Client) ensureModelAvailable(ctx context.Context) error {
+// fetchTags lists the models pulled on the Ollama server.
+func (c *Client) fetchTags(ctx context.Context) (tagsResponse, error) {
+	var tags tagsResponse
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/api/tags", nil)
 	if err != nil {
-		return fmt.Errorf("building ollama tags request: %w", err)
+		return tags, fmt.Errorf("building ollama tags request: %w", err)
 	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("checking ollama availability: %w", err)
+		return tags, fmt.Errorf("checking ollama availability: %w", err)
 	}
 	defer resp.Body.Close() //nolint:errcheck
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("ollama tags check: unexpected status %d", resp.StatusCode)
+		return tags, fmt.Errorf("ollama tags check: unexpected status %d", resp.StatusCode)
 	}
 
-	var tags tagsResponse
 	if err := json.NewDecoder(resp.Body).Decode(&tags); err != nil {
-		return fmt.Errorf("decoding ollama tags response: %w", err)
+		return tags, fmt.Errorf("decoding ollama tags response: %w", err)
+	}
+
+	return tags, nil
+}
+
+// ensureModelAvailable confirms the configured completion model has already
+// been pulled on the Ollama server, matching either the bare model name or
+// its default ":latest"-suffixed tag.
+func (c *Client) ensureModelAvailable(ctx context.Context) error {
+	tags, err := c.fetchTags(ctx)
+	if err != nil {
+		return err
 	}
 
 	for _, m := range tags.Models {

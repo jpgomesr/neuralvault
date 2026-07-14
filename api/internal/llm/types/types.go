@@ -51,6 +51,17 @@ type Usage struct {
 	CacheCreationTokens int
 }
 
+// ModelInfo identifies one model a provider can serve. Models are listed live
+// from each provider rather than hardcoded, since the available IDs change
+// frequently and differ per API key.
+type ModelInfo struct {
+	// ID is the value to send as CompletionRequest.Model.
+	ID string `json:"id"`
+	// Name is a human-readable label. Providers that expose no display name
+	// repeat the ID here.
+	Name string `json:"name"`
+}
+
 // StreamChunk is one incremental piece of a streamed completion.
 // Done is true on the final chunk; Content may be empty on that chunk.
 // The channel is closed after a final chunk (Done == true)
