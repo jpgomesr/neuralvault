@@ -1,0 +1,93 @@
+{
+   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+
+   "extends": [
+      "config:recommended",
+      ":dependencyDashboard",
+      ":semanticCommits",
+      ":label(dependencies)"
+   ],
+
+   "timezone": "America/Sao_Paulo",
+
+   "schedule": ["after 6am and before 10pm every weekday"],
+
+   "prHourlyLimit": 2,
+   "prConcurrentLimit": 5,
+
+   "rangeStrategy": "replace",
+
+   "minimumReleaseAge": "3 days",
+   "osvVulnerabilityAlerts": true,
+
+   "vulnerabilityAlerts": {
+      "labels": ["security"]
+   },
+
+   "lockFileMaintenance": {
+      "enabled": true
+   },
+
+   "packageRules": [
+      {
+         "description": "Go dependencies",
+         "matchManagers": ["gomod"],
+         "groupName": "Go dependencies"
+      },
+
+      {
+         "description": "Frontend dependencies",
+         "matchManagers": ["npm"],
+         "groupName": "Frontend dependencies"
+      },
+
+      {
+         "description": "GitHub Actions",
+         "matchManagers": ["github-actions"],
+         "groupName": "GitHub Actions"
+      },
+
+      {
+         "description": "Docker",
+         "matchManagers": ["dockerfile", "docker-compose"],
+         "groupName": "Docker"
+      },
+
+      {
+         "description": "React ecosystem stays isolated from other frontend bumps",
+         "matchPackageNames": ["react", "react-dom", "next"],
+         "groupName": "React ecosystem"
+      },
+
+      {
+         "description": "ESLint",
+         "matchPackageNames": ["eslint*", "@eslint*"],
+         "groupName": "ESLint"
+      },
+
+      {
+         "description": "Patch updates",
+         "matchUpdateTypes": ["patch"],
+         "automerge": true
+      },
+
+      {
+         "description": "Pin digest updates",
+         "matchUpdateTypes": ["digest"],
+         "automerge": true
+      },
+
+      {
+         "description": "Minor updates",
+         "matchUpdateTypes": ["minor"],
+         "automerge": false
+      },
+
+      {
+         "description": "Major updates",
+         "matchUpdateTypes": ["major"],
+         "labels": ["breaking-change"],
+         "dependencyDashboardApproval": true
+      }
+   ]
+}
