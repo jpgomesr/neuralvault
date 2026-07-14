@@ -469,7 +469,12 @@ func TestLoadConfig_MissingRequiredStringFields(t *testing.T) {
 		{name: "qdrant url", envVar: "QDRANT_URL", fieldName: "Qdrant.URL"},
 		{name: "qdrant api key", envVar: "QDRANT_API_KEY", fieldName: "Qdrant.APIKey"},
 		{name: "qdrant collection name", envVar: "QDRANT_COLLECTION_NAME", fieldName: "Qdrant.CollectionName"},
-		{name: "ollama url", envVar: "OLLAMA_URL", fieldName: "Ollama.URL"},
+		// OLLAMA_URL itself is intentionally absent from this table: it is now
+		// the on/off switch for the server's default Ollama (see
+		// TestLoadConfig_OllamaDisabledWhenURLEmpty), not an unconditionally
+		// required field. The other two Ollama fields stay required, but only
+		// because setValidEnv sets OLLAMA_URL, which makes them
+		// required_with=URL.
 		{name: "ollama embedding model", envVar: "OLLAMA_EMBEDDING_MODEL", fieldName: "Ollama.EmbeddingModel"},
 		{name: "ollama completion model", envVar: "OLLAMA_COMPLETION_MODEL", fieldName: "Ollama.CompletionModel"},
 		{name: "minio endpoint", envVar: "MINIO_ENDPOINT", fieldName: "MinIO.Endpoint"},
@@ -509,6 +514,58 @@ func TestLoadConfig_MissingRequiredStringFields(t *testing.T) {
 				t.Fatalf("expected validation error for %s, got: %v", tc.fieldName, err)
 			}
 		})
+	}
+}
+
+// An empty OLLAMA_URL must not fail validation: it is the deliberate switch for
+// a fully BYOK deployment with no server-default provider, not a missing value.
+func TestLoadConfig_OllamaDisabledWhenURLEmpty(t *testing.T) {
+	resetGlobals()
+
+	configDir := t.TempDir()
+	t.Setenv("CONFIG_DIR", configDir)
+	setValidEnv(t)
+
+	for _, key := range []string{"OLLAMA_PORT", "OLLAMA_URL", "OLLAMA_EMBEDDING_MODEL", "OLLAMA_COMPLETION_MODEL"} {
+		if err := os.Unsetenv(key); err != nil {
+			t.Fatalf("failed to unset %s: %v", key, err)
+		}
+	}
+
+	cfg, err := loadConfig()
+	if err != nil {
+		t.Fatalf("loadConfig with no Ollama configured: %v", err)
+	}
+	if cfg.Ollama.Enabled() {
+		t.Error("Ollama.Enabled() = true, want false with OLLAMA_URL unset")
+	}
+}
+
+// Setting OLLAMA_URL without the other three fields must still fail: a
+// half-configured Ollama would only be discovered as broken on first use.
+func TestLoadConfig_OllamaURLRequiresRestOfConfig(t *testing.T) {
+	resetGlobals()
+
+	configDir := t.TempDir()
+	t.Setenv("CONFIG_DIR", configDir)
+	setValidEnv(t)
+
+	if err := os.Unsetenv("OLLAMA_COMPLETION_MODEL"); err != nil {
+		t.Fatalf("failed to unset OLLAMA_COMPLETION_MODEL: %v", err)
+	}
+
+	_, err := loadConfig()
+	if err == nil || !strings.Contains(err.Error(), "Ollama.CompletionModel") {
+		t.Fatalf("loadConfig() = %v, want a validation error for Ollama.CompletionModel", err)
+	}
+}
+
+func TestOllamaEnabled(t *testing.T) {
+	if (Ollama{URL: "http://localhost:11434"}).Enabled() != true {
+		t.Error("Enabled() = false, want true when URL is set")
+	}
+	if (Ollama{}).Enabled() != false {
+		t.Error("Enabled() = true, want false when URL is empty")
 	}
 }
 

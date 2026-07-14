@@ -74,20 +74,31 @@ func main() {
 		os.Exit(1)
 	}
 
-	embedder, err := embedding.NewEmbedder(ctx, cfg)
-	if err != nil {
-		slog.Error("failed to initialise embedder", "err", err)
-		os.Exit(1)
-	}
+	// embedder and the LLM provider fail-fast check only run when the server has
+	// a default Ollama configured (OLLAMA_URL set). A deployment that runs
+	// entirely on BYOK — every workspace bringing its own key — has no local
+	// model to check and no reason to require one; modelConfig resolves
+	// providers per workspace regardless. embedder stays nil in that case, and
+	// router skips the "ollama" health check for it.
+	var embedder embedding.Embedder
+	if cfg.Ollama.Enabled() {
+		embedder, err = embedding.NewEmbedder(ctx, cfg)
+		if err != nil {
+			slog.Error("failed to initialise embedder", "err", err)
+			os.Exit(1)
+		}
 
-	// The server default provider is constructed here purely to fail fast: a
-	// workspace with no BYOK credential falls back to it, so a misconfigured
-	// Ollama must kill the process at boot rather than surface on the first
-	// query. The instance itself is not passed on — modelConfig resolves
-	// providers per workspace.
-	if _, err := llm.NewProvider(ctx, cfg); err != nil {
-		slog.Error("failed to initialise llm provider", "err", err)
-		os.Exit(1)
+		// The server default LLM provider is constructed here purely to fail
+		// fast: a workspace with no BYOK credential falls back to it, so a
+		// misconfigured Ollama must kill the process at boot rather than surface
+		// on the first query. The instance itself is not passed on — modelConfig
+		// resolves providers per workspace.
+		if _, err := llm.NewProvider(ctx, cfg); err != nil {
+			slog.Error("failed to initialise llm provider", "err", err)
+			os.Exit(1)
+		}
+	} else {
+		slog.Info("no server-default Ollama configured (OLLAMA_URL empty); every workspace must configure its own provider")
 	}
 
 	cipher, err := crypto.New(cfg.Secrets.EncryptionKey)

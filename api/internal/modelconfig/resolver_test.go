@@ -79,6 +79,46 @@ func TestResolveLLM_FallsBackToServerDefault(t *testing.T) {
 	}
 }
 
+// A fully BYOK deployment (OLLAMA_URL unset) has no fallback: a workspace with
+// no settings and no override must get a clear, actionable error instead of an
+// attempt to reach an empty URL.
+func TestResolveLLM_NoDefaultProviderWhenOllamaDisabled(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.Ollama = config.Ollama{} // OLLAMA_URL unset: disabled.
+	r := newResolver(fakeStore{}, cfg)
+
+	_, _, err := r.ResolveLLM(context.Background(), uuid.New(), nil)
+	if !errors.Is(err, ErrNoDefaultProvider) {
+		t.Fatalf("error = %v, want ErrNoDefaultProvider", err)
+	}
+}
+
+// Explicitly picking "ollama" — via an override or saved settings — must be
+// rejected the same way when the server has none configured, not just the
+// implicit fallback.
+func TestResolveLLM_ExplicitOllamaRejectedWhenDisabled(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.Ollama = config.Ollama{}
+	r := newResolver(fakeStore{}, cfg)
+
+	override := &llm.Selection{Provider: catalog.Ollama, Model: "llama3"}
+	_, _, err := r.ResolveLLM(context.Background(), uuid.New(), override)
+	if !errors.Is(err, ErrNoDefaultProvider) {
+		t.Fatalf("error = %v, want ErrNoDefaultProvider", err)
+	}
+}
+
+func TestResolveEmbedder_NoDefaultProviderWhenOllamaDisabled(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.Ollama = config.Ollama{}
+	r := newResolver(fakeStore{}, cfg)
+
+	_, _, err := r.ResolveEmbedder(context.Background(), uuid.New())
+	if !errors.Is(err, ErrNoDefaultProvider) {
+		t.Fatalf("error = %v, want ErrNoDefaultProvider", err)
+	}
+}
+
 func TestResolveLLM_UsesWorkspaceDefault(t *testing.T) {
 	store := fakeStore{
 		settings: model.WorkspaceModelSettings{

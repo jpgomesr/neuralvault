@@ -71,12 +71,25 @@ type Qdrant struct {
 	VectorSize     uint64 `envconfig:"VECTOR_SIZE" validate:"required"`
 }
 
-// Ollama contains local-LLM configuration.
+// Ollama contains the server's default local-LLM configuration.
+//
+// URL is the switch: leaving it empty disables Ollama entirely, so the server
+// boots without it and has no fallback provider. Every workspace must then
+// configure its own provider (BYOK) — see internal/modelconfig. When URL is
+// set, the other three fields become required, since a partially configured
+// Ollama would fail on first use instead of at startup.
 type Ollama struct {
-	Port            int    `envconfig:"PORT" validate:"required,gte=1,lte=65535"`
-	URL             string `envconfig:"URL" validate:"required"`
-	EmbeddingModel  string `envconfig:"EMBEDDING_MODEL" validate:"required"`
-	CompletionModel string `envconfig:"COMPLETION_MODEL" validate:"required"`
+	Port            int    `envconfig:"PORT" validate:"required_with=URL,omitempty,gte=1,lte=65535"`
+	URL             string `envconfig:"URL"`
+	EmbeddingModel  string `envconfig:"EMBEDDING_MODEL" validate:"required_with=URL"`
+	CompletionModel string `envconfig:"COMPLETION_MODEL" validate:"required_with=URL"`
+}
+
+// Enabled reports whether the server has a default Ollama provider. When
+// false, there is no fallback: every workspace must configure its own
+// provider.
+func (o Ollama) Enabled() bool {
+	return o.URL != ""
 }
 
 // MinIO contains object storage configuration.

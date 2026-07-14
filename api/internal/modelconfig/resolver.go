@@ -58,11 +58,20 @@ func clientKey(provider catalog.Provider, model, baseURL, apiKey string) string 
 
 // credentialFor loads the workspace's key for a provider.
 //
-// Providers that need no key (Ollama) short-circuit. A provider that needs one
-// but has none is a user-facing configuration error, not an internal failure:
-// it means the workspace selected a model without saving a key for it.
+// Providers that need no key (Ollama) short-circuit — except Ollama itself when
+// the server has none configured (OLLAMA_URL empty). That check belongs here
+// rather than in each caller because every path that can end up choosing Ollama
+// — an explicit override, saved workspace settings, or the implicit
+// no-settings-configured default — funnels through this one function.
+//
+// A provider that needs a key but has none is a user-facing configuration
+// error, not an internal failure: it means the workspace selected a model
+// without saving a key for it.
 func (r *resolver) credentialFor(ctx context.Context, workspaceID uuid.UUID, entry catalog.Entry) (apiKey, baseURL string, err error) {
 	if !entry.RequiresAPIKey {
+		if entry.Provider == catalog.Ollama && !r.cfg.Ollama.Enabled() {
+			return "", "", fmt.Errorf("%w: this server has no default Ollama provider configured", ErrNoDefaultProvider)
+		}
 		return "", "", nil
 	}
 

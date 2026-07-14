@@ -34,6 +34,12 @@ var ErrInvalidProvider = errors.New("invalid provider")
 // internal error.
 var ErrProviderUnavailable = errors.New("provider unavailable")
 
+// ErrNoDefaultProvider is returned when a workspace has no provider configured
+// for a role (completion or embedding) and the server has no default Ollama to
+// fall back to (OLLAMA_URL unset — a fully BYOK deployment). The workspace must
+// configure its own provider; there is nothing else to try.
+var ErrNoDefaultProvider = errors.New("no default provider configured")
+
 // Service is the model-configuration API of a workspace.
 type Service interface {
 	// Providers returns the provider catalog annotated with which ones this
@@ -132,8 +138,10 @@ func (s *ModelConfigService) Providers(ctx context.Context, workspaceID uuid.UUI
 		status := ProviderStatus{Entry: entry, BaseURL: entry.BaseURL}
 
 		if !entry.RequiresAPIKey {
-			// Ollama needs no key; it is configured as long as the server has it.
-			status.Configured = true
+			// Ollama needs no key, but it still needs the server to have one
+			// configured — an empty OLLAMA_URL means there is no default
+			// provider, and the frontend must not offer it as selectable.
+			status.Configured = s.cfg.Ollama.Enabled()
 			status.BaseURL = s.cfg.Ollama.URL
 			out = append(out, status)
 			continue

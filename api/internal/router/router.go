@@ -41,17 +41,22 @@ func NewRouter(cfg *config.Config, pool storage.Pool, store objectstorage.Client
 	r.Use(requestLogging)
 	r.Use(middleware.Recoverer)
 
-	healthService := health.NewHealthService(3*time.Second,
-		health.Check{Name: "postgres", Fn: pool.Ping},
-		health.Check{Name: "qdrant", Fn: func(ctx context.Context) error {
+	healthChecks := []health.Check{
+		{Name: "postgres", Fn: pool.Ping},
+		{Name: "qdrant", Fn: func(ctx context.Context) error {
 			_, err := vectorStore.HealthCheck(ctx)
 			return err
 		}},
-		health.Check{Name: "minio", Fn: store.HealthCheck},
-		health.Check{Name: "ollama", Fn: embedder.HealthCheck},
-		health.Check{Name: "reranker", Fn: reranker.HealthCheck},
-		health.Check{Name: "keycloak", Fn: authService.HealthCheck},
-	)
+		{Name: "minio", Fn: store.HealthCheck},
+		{Name: "reranker", Fn: reranker.HealthCheck},
+		{Name: "keycloak", Fn: authService.HealthCheck},
+	}
+	// embedder is nil when the server has no default Ollama (OLLAMA_URL empty,
+	// a fully BYOK deployment) — there is nothing to health-check in that case.
+	if embedder != nil {
+		healthChecks = append(healthChecks, health.Check{Name: "ollama", Fn: embedder.HealthCheck})
+	}
+	healthService := health.NewHealthService(3*time.Second, healthChecks...)
 	healthHandler := health.NewHandler(healthService)
 
 	splitters := map[chunking.ContentType]chunking.Splitter{

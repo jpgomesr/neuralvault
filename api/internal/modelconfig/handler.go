@@ -62,16 +62,16 @@ func provider(r *http.Request) catalog.Provider {
 
 // writeServiceError maps a service error to a status code.
 //
-// ErrInvalidProvider and ErrCredentialNotFound are the user's mistakes (an
-// unknown provider, a model chosen with no key saved) and their messages are
-// safe to return. ErrProviderUnavailable carries the upstream provider's own
-// message — "Invalid API Key", "model not found" — which is exactly what the
-// user needs to fix their configuration, and contains no NeuralVault internals.
-// Anything else is a genuine 500 and goes through httperr, which never leaks
-// detail.
+// ErrInvalidProvider, ErrCredentialNotFound and ErrNoDefaultProvider are the
+// user's mistakes (an unknown provider, a model chosen with no key saved, no
+// provider configured at all) and their messages are safe to return.
+// ErrProviderUnavailable carries the upstream provider's own message —
+// "Invalid API Key", "model not found" — which is exactly what the user needs
+// to fix their configuration, and contains no NeuralVault internals. Anything
+// else is a genuine 500 and goes through httperr, which never leaks detail.
 func writeServiceError(w http.ResponseWriter, r *http.Request, logMsg string, err error, kv ...any) {
 	switch {
-	case errors.Is(err, ErrInvalidProvider), errors.Is(err, ErrCredentialNotFound):
+	case errors.Is(err, ErrInvalidProvider), errors.Is(err, ErrCredentialNotFound), errors.Is(err, ErrNoDefaultProvider):
 		http.Error(w, err.Error(), http.StatusBadRequest)
 	case errors.Is(err, ErrProviderUnavailable):
 		http.Error(w, err.Error(), http.StatusBadGateway)
