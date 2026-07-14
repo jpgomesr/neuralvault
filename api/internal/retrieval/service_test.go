@@ -30,6 +30,41 @@ import (
 
 const testVectorSize = 8
 
+// staticResolver satisfies both embedding.Resolver and llm.Resolver from fixed
+// fakes, so these tests exercise retrieval behaviour rather than the BYOK model
+// resolution that modelconfig owns and tests separately.
+//
+// ResolveLLM still honours a per-request override, since that path runs through
+// Answer and is asserted here.
+type staticResolver struct {
+	embedder   embedding.Embedder
+	collection string
+	provider   llm.Provider
+	model      string
+}
+
+func (r staticResolver) ResolveEmbedder(context.Context, uuid.UUID) (embedding.Embedder, embedding.Target, error) {
+	return r.embedder, embedding.Target{
+		Model:      "test-embedding-model",
+		Collection: r.collection,
+		Dimensions: testVectorSize,
+	}, nil
+}
+
+func (r staticResolver) ResolveLLM(_ context.Context, _ uuid.UUID, override *llm.Selection) (llm.Provider, string, error) {
+	if override != nil {
+		return r.provider, override.Model, nil
+	}
+	return r.provider, r.model, nil
+}
+
+// newTestService constructs a RetrievalService from concrete fakes, wrapping
+// them in a staticResolver.
+func newTestService(pool storage.Pool, emb embedding.Embedder, vs vectorstorage.Client, prov llm.Provider, rr reranking.Reranker, collection, completionModel string) *RetrievalService {
+	res := staticResolver{embedder: emb, collection: collection, provider: prov, model: completionModel}
+	return NewRetrievalService(pool, res, vs, res, rr)
+}
+
 // fixedEmbedder returns the same vector for every query, regardless of text.
 // It satisfies embedding.Embedder without requiring a running Ollama instance.
 type fixedEmbedder struct{ vector []float32 }
@@ -156,7 +191,7 @@ func TestMain(m *testing.M) {
 func runAllTests(m *testing.M) int {
 	ctx := context.Background()
 
-	// ── Postgres ──────────────────────────────────────────────────────────────
+	// â”€â”€ Postgres â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 	pgCtr, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
 		ContainerRequest: testcontainers.ContainerRequest{
 			Image:        "postgres:17",
@@ -219,7 +254,7 @@ func runAllTests(m *testing.M) int {
 		return 1
 	}
 
-	// ── Qdrant ────────────────────────────────────────────────────────────────
+	// â”€â”€ Qdrant â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 	qdrantCtr, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
 		ContainerRequest: testcontainers.ContainerRequest{
 			Image:        "qdrant/qdrant:v1.18.2",
@@ -337,7 +372,7 @@ func insertChunk(ctx context.Context, t *testing.T, workspaceID, sourceID uuid.U
 }
 
 func newSvc(emb embedding.Embedder) *RetrievalService {
-	return NewRetrievalService(sharedPool, emb, sharedVecStore, nil, passthroughReranker, sharedQdrantCfg.CollectionName, "")
+	return newTestService(sharedPool, emb, sharedVecStore, nil, passthroughReranker, sharedQdrantCfg.CollectionName, "")
 }
 
 // vec returns a fixed one-hot vector, used where only vector identity (not
@@ -357,7 +392,7 @@ func oneHot(dim int, val float32) []float32 {
 	return v
 }
 
-// ── Retrieve integration tests ────────────────────────────────────────────────
+// â”€â”€ Retrieve integration tests â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 func TestRetrieve_ReturnsTopKOrderedByScore(t *testing.T) {
 	ctx := context.Background()
@@ -473,7 +508,7 @@ func TestRetrieve_QdrantQueryError(t *testing.T) {
 	vs := fakeVectorStore{queryFn: func(_ context.Context, _ *qdrantpb.QueryPoints) ([]*qdrantpb.ScoredPoint, error) {
 		return nil, errors.New("qdrant unreachable")
 	}}
-	svc := NewRetrievalService(sharedPool, fixedEmbedder{vector: vec(1.0)}, vs, nil, passthroughReranker, sharedQdrantCfg.CollectionName, "")
+	svc := newTestService(sharedPool, fixedEmbedder{vector: vec(1.0)}, vs, nil, passthroughReranker, sharedQdrantCfg.CollectionName, "")
 
 	_, err := svc.Retrieve(ctx, RetrieveRequest{WorkspaceID: wid, Query: "anything"})
 	if err == nil || !strings.Contains(err.Error(), "qdrant query") {
@@ -488,7 +523,7 @@ func TestRetrieve_InvalidPointID(t *testing.T) {
 	vs := fakeVectorStore{queryFn: func(_ context.Context, _ *qdrantpb.QueryPoints) ([]*qdrantpb.ScoredPoint, error) {
 		return []*qdrantpb.ScoredPoint{{Id: qdrantpb.NewID("not-a-uuid"), Score: 0.5}}, nil
 	}}
-	svc := NewRetrievalService(sharedPool, fixedEmbedder{vector: vec(1.0)}, vs, nil, passthroughReranker, sharedQdrantCfg.CollectionName, "")
+	svc := newTestService(sharedPool, fixedEmbedder{vector: vec(1.0)}, vs, nil, passthroughReranker, sharedQdrantCfg.CollectionName, "")
 
 	_, err := svc.Retrieve(ctx, RetrieveRequest{WorkspaceID: wid, Query: "anything"})
 	if err == nil || !strings.Contains(err.Error(), "parsing point id") {
@@ -505,7 +540,7 @@ func TestRetrieve_LoadChunksError(t *testing.T) {
 	vs := fakeVectorStore{queryFn: func(_ context.Context, _ *qdrantpb.QueryPoints) ([]*qdrantpb.ScoredPoint, error) {
 		return []*qdrantpb.ScoredPoint{scoredPointWithUUID(chunk.ID, 0.9)}, nil
 	}}
-	svc := NewRetrievalService(queryFailingPool{Pool: sharedPool}, fixedEmbedder{vector: vec(1.0)}, vs, nil, passthroughReranker, sharedQdrantCfg.CollectionName, "")
+	svc := newTestService(queryFailingPool{Pool: sharedPool}, fixedEmbedder{vector: vec(1.0)}, vs, nil, passthroughReranker, sharedQdrantCfg.CollectionName, "")
 
 	_, err := svc.Retrieve(ctx, RetrieveRequest{WorkspaceID: wid, Query: "anything"})
 	if err == nil || !strings.Contains(err.Error(), "loading chunks") {
@@ -522,7 +557,7 @@ func TestRetrieve_LexicalSearchError(t *testing.T) {
 	vs := fakeVectorStore{queryFn: func(_ context.Context, _ *qdrantpb.QueryPoints) ([]*qdrantpb.ScoredPoint, error) {
 		return []*qdrantpb.ScoredPoint{scoredPointWithUUID(chunk.ID, 0.9)}, nil
 	}}
-	svc := NewRetrievalService(lexicalSearchFailingPool{Pool: sharedPool}, fixedEmbedder{vector: vec(1.0)}, vs, nil, passthroughReranker, sharedQdrantCfg.CollectionName, "")
+	svc := newTestService(lexicalSearchFailingPool{Pool: sharedPool}, fixedEmbedder{vector: vec(1.0)}, vs, nil, passthroughReranker, sharedQdrantCfg.CollectionName, "")
 
 	_, err := svc.Retrieve(ctx, RetrieveRequest{WorkspaceID: wid, Query: "anything"})
 	if err == nil || !strings.Contains(err.Error(), "lexical search") {
@@ -581,7 +616,7 @@ func TestRetrieve_RerankOverridesHybridOrder(t *testing.T) {
 		return results, nil
 	}}
 
-	svc := NewRetrievalService(sharedPool, fixedEmbedder{vector: queryVector}, sharedVecStore, nil, invertOrder, sharedQdrantCfg.CollectionName, "")
+	svc := newTestService(sharedPool, fixedEmbedder{vector: queryVector}, sharedVecStore, nil, invertOrder, sharedQdrantCfg.CollectionName, "")
 	results, err := svc.Retrieve(ctx, RetrieveRequest{WorkspaceID: wid, Query: "anything", TopK: 1})
 	if err != nil {
 		t.Fatalf("Retrieve: %v", err)
@@ -606,7 +641,7 @@ func TestRetrieve_RerankFailureDegradesGracefully(t *testing.T) {
 		return nil, errors.New("reranker unavailable")
 	}}
 
-	svc := NewRetrievalService(sharedPool, fixedEmbedder{vector: queryVector}, sharedVecStore, nil, failingReranker, sharedQdrantCfg.CollectionName, "")
+	svc := newTestService(sharedPool, fixedEmbedder{vector: queryVector}, sharedVecStore, nil, failingReranker, sharedQdrantCfg.CollectionName, "")
 	results, err := svc.Retrieve(ctx, RetrieveRequest{WorkspaceID: wid, Query: "anything", TopK: 1})
 	if err != nil {
 		t.Fatalf("expected Retrieve to succeed despite reranker failure, got: %v", err)
@@ -630,7 +665,7 @@ func TestRetrieve_FiltersCrossWorkspaceLeak(t *testing.T) {
 	vs := fakeVectorStore{queryFn: func(_ context.Context, _ *qdrantpb.QueryPoints) ([]*qdrantpb.ScoredPoint, error) {
 		return []*qdrantpb.ScoredPoint{scoredPointWithUUID(chunkB.ID, 0.9)}, nil
 	}}
-	svc := NewRetrievalService(sharedPool, fixedEmbedder{vector: vec(1.0)}, vs, nil, passthroughReranker, sharedQdrantCfg.CollectionName, "")
+	svc := newTestService(sharedPool, fixedEmbedder{vector: vec(1.0)}, vs, nil, passthroughReranker, sharedQdrantCfg.CollectionName, "")
 
 	results, err := svc.Retrieve(ctx, RetrieveRequest{WorkspaceID: widA, Query: "anything"})
 	if err != nil {
@@ -641,7 +676,7 @@ func TestRetrieve_FiltersCrossWorkspaceLeak(t *testing.T) {
 	}
 }
 
-// ── Answer tests ────────────────────────────────────────────────────────────
+// â”€â”€ Answer tests â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 //
 // The retrieval-error and stream-start-error branches, plus the empty-context
 // case, are covered in answer_test.go. This one exercises the grounded path
@@ -661,7 +696,7 @@ func TestAnswer_GroundsPromptWithRetrievedChunk(t *testing.T) {
 	ch <- llm.StreamChunk{Done: true}
 	close(ch)
 	prov := &fakeProvider{stream: ch}
-	svc := NewRetrievalService(sharedPool, fixedEmbedder{vector: vec(1.0)}, sharedVecStore, prov, passthroughReranker, sharedQdrantCfg.CollectionName, "answer-model")
+	svc := newTestService(sharedPool, fixedEmbedder{vector: vec(1.0)}, sharedVecStore, prov, passthroughReranker, sharedQdrantCfg.CollectionName, "answer-model")
 
 	chunks, stream, err := svc.Answer(ctx, RetrieveRequest{WorkspaceID: wid, Query: "what does it show", TopK: 5})
 	if err != nil {

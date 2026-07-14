@@ -312,6 +312,64 @@ func (f *fakeStore) Delete(_ context.Context, key string) error {
 
 func (f *fakeStore) HealthCheck(_ context.Context) error { return nil }
 
+// stubResolver satisfies both embedding.Resolver and llm.Resolver from fixed
+// fakes, so these tests exercise the ingest pipeline rather than the BYOK model
+// resolution that modelconfig owns and tests separately.
+type stubResolver struct {
+	embedder   embedding.Embedder
+	collection string
+	embModel   string
+	provider   llm.Provider
+	llmModel   string
+}
+
+func (r stubResolver) ResolveEmbedder(context.Context, uuid.UUID) (embedding.Embedder, embedding.Target, error) {
+	return r.embedder, embedding.Target{
+		Model:      r.embModel,
+		Collection: r.collection,
+		Dimensions: 768,
+	}, nil
+}
+
+func (r stubResolver) ResolveLLM(context.Context, uuid.UUID, *llm.Selection) (llm.Provider, string, error) {
+	return r.provider, r.llmModel, nil
+}
+
+// newTestSourceService constructs a SourceService from concrete fakes, wrapping
+// them in a stubResolver.
+func newTestSourceService(
+	pool storage.Pool,
+	store objectstorage.Client,
+	reader sourcereader.Reader,
+	chunker *chunking.ChunkService,
+	bus *ProgressBus,
+	emb embedding.Embedder,
+	vs vectorstorage.Client,
+	prov llm.Provider,
+	collection string,
+	embeddingModel string,
+	completionModel string,
+) *SourceService {
+	res := stubResolver{
+		embedder:   emb,
+		collection: collection,
+		embModel:   embeddingModel,
+		provider:   prov,
+		llmModel:   completionModel,
+	}
+	return NewSourceService(pool, store, reader, chunker, bus, res, vs, res)
+}
+
+// runPipelineWithDefaults drives the pipeline the way the background indexing
+// goroutines do: resolve the workspace's models first, then run.
+func (s *SourceService) runPipelineWithDefaults(ctx context.Context, source model.Source, rootPath string) (int, error) {
+	models, err := s.resolveModels(ctx, source.WorkspaceID)
+	if err != nil {
+		return 0, err
+	}
+	return s.runPipeline(ctx, source, rootPath, models)
+}
+
 // buildSvcWithStore builds a SourceService with a custom pool and object store,
 // a real chunker on sharedPool, and no-op embedder/vector store.
 func buildSvcWithStore(_ context.Context, t *testing.T, pool storage.Pool, store objectstorage.Client) *SourceService {
@@ -320,7 +378,7 @@ func buildSvcWithStore(_ context.Context, t *testing.T, pool storage.Pool, store
 		chunking.ContentTypeMarkdown:  markdown.New(),
 		chunking.ContentTypePlaintext: text.New(),
 	}
-	return NewSourceService(
+	return newTestSourceService(
 		pool,
 		store,
 		sourcereader.NewFileReader(),
@@ -474,7 +532,7 @@ func newSvcVS(ctx context.Context, t *testing.T, vs vectorstorage.Client) *Sourc
 		chunking.ContentTypeMarkdown:  markdown.New(),
 		chunking.ContentTypePlaintext: text.New(),
 	}
-	return NewSourceService(
+	return newTestSourceService(
 		sharedPool,
 		store,
 		sourcereader.NewFileReader(),
@@ -1121,7 +1179,7 @@ func buildCustomSvcWithProvider(_ context.Context, t *testing.T, pool storage.Po
 		chunking.ContentTypeMarkdown:  markdown.New(),
 		chunking.ContentTypePlaintext: text.New(),
 	}
-	return NewSourceService(
+	return newTestSourceService(
 		pool,
 		nil, // objectstorage.Client — not used by runPipeline
 		sourcereader.NewFileReader(),
@@ -1189,7 +1247,7 @@ func makeTempDirWithFile(t *testing.T, name, content string) string {
 
 func TestUpsertChunkVectors_CountMismatch(t *testing.T) {
 	ctx := context.Background()
-	svc := &SourceService{vectorStore: stubVectorStore{}, collectionName: "test"}
+	svc := &SourceService{vectorStore: stubVectorStore{}}
 
 	chunks := []model.Chunk{
 		{ID: uuid.New(), WorkspaceID: uuid.New(), SourceID: uuid.New()},
@@ -1199,7 +1257,7 @@ func TestUpsertChunkVectors_CountMismatch(t *testing.T) {
 		{ChunkID: chunks[0].ID.String(), Vector: []float32{0.1}},
 	}
 
-	err := svc.upsertChunkVectors(ctx, chunks, embeddings)
+	err := svc.upsertChunkVectors(ctx, chunks, embeddings, "test")
 	if err == nil || !strings.Contains(err.Error(), "embedding count mismatch") {
 		t.Fatalf("expected embedding count mismatch error, got: %v", err)
 	}
@@ -1207,7 +1265,7 @@ func TestUpsertChunkVectors_CountMismatch(t *testing.T) {
 
 func TestUpsertChunkVectors_EmptyVector(t *testing.T) {
 	ctx := context.Background()
-	svc := &SourceService{vectorStore: stubVectorStore{}, collectionName: "test"}
+	svc := &SourceService{vectorStore: stubVectorStore{}}
 
 	id := uuid.New()
 	chunks := []model.Chunk{
@@ -1217,7 +1275,7 @@ func TestUpsertChunkVectors_EmptyVector(t *testing.T) {
 		{ChunkID: id.String(), Vector: nil},
 	}
 
-	err := svc.upsertChunkVectors(ctx, chunks, embeddings)
+	err := svc.upsertChunkVectors(ctx, chunks, embeddings, "test")
 	if err == nil || !strings.Contains(err.Error(), "empty vector") {
 		t.Fatalf("expected empty vector error, got: %v", err)
 	}
@@ -1225,7 +1283,7 @@ func TestUpsertChunkVectors_EmptyVector(t *testing.T) {
 
 func TestUpsertChunkVectors_ZeroUUID(t *testing.T) {
 	ctx := context.Background()
-	svc := &SourceService{vectorStore: stubVectorStore{}, collectionName: "test"}
+	svc := &SourceService{vectorStore: stubVectorStore{}}
 
 	chunks := []model.Chunk{
 		{ID: uuid.Nil, WorkspaceID: uuid.New(), SourceID: uuid.New()},
@@ -1234,7 +1292,7 @@ func TestUpsertChunkVectors_ZeroUUID(t *testing.T) {
 		{ChunkID: uuid.Nil.String(), Vector: []float32{0.1, 0.2}},
 	}
 
-	err := svc.upsertChunkVectors(ctx, chunks, embeddings)
+	err := svc.upsertChunkVectors(ctx, chunks, embeddings, "test")
 	if err == nil || !strings.Contains(err.Error(), "zero-value UUID") {
 		t.Fatalf("expected zero-value UUID error, got: %v", err)
 	}
@@ -1242,7 +1300,7 @@ func TestUpsertChunkVectors_ZeroUUID(t *testing.T) {
 
 func TestUpsertChunkVectors_UpsertError(t *testing.T) {
 	ctx := context.Background()
-	svc := &SourceService{vectorStore: errorVectorStore{}, collectionName: "test"}
+	svc := &SourceService{vectorStore: errorVectorStore{}}
 
 	id := uuid.New()
 	chunks := []model.Chunk{
@@ -1252,7 +1310,7 @@ func TestUpsertChunkVectors_UpsertError(t *testing.T) {
 		{ChunkID: id.String(), Vector: []float32{0.1, 0.2}},
 	}
 
-	err := svc.upsertChunkVectors(ctx, chunks, embeddings)
+	err := svc.upsertChunkVectors(ctx, chunks, embeddings, "test")
 	if err == nil || !strings.Contains(err.Error(), "qdrant upsert") {
 		t.Fatalf("expected qdrant upsert error, got: %v", err)
 	}
@@ -1409,10 +1467,10 @@ func TestServiceDelete_RowDeleteError(t *testing.T) {
 func TestDeleteSourceVectors(t *testing.T) {
 	ctx := context.Background()
 	spy := &spyVectorStore{}
-	svc := &SourceService{vectorStore: spy, collectionName: "test"}
+	svc := &SourceService{vectorStore: spy}
 
 	sourceID := uuid.New()
-	if err := svc.deleteSourceVectors(ctx, sourceID); err != nil {
+	if err := svc.deleteSourceVectors(ctx, sourceID, "test"); err != nil {
 		t.Fatalf("deleteSourceVectors: %v", err)
 	}
 
@@ -1430,9 +1488,9 @@ func TestDeleteSourceVectors(t *testing.T) {
 
 func TestDeleteSourceVectors_DeleteError(t *testing.T) {
 	ctx := context.Background()
-	svc := &SourceService{vectorStore: deleteErrorVectorStore{}, collectionName: "test"}
+	svc := &SourceService{vectorStore: deleteErrorVectorStore{}}
 
-	err := svc.deleteSourceVectors(ctx, uuid.New())
+	err := svc.deleteSourceVectors(ctx, uuid.New(), "test")
 	if err == nil || !strings.Contains(err.Error(), "qdrant delete") {
 		t.Fatalf("expected qdrant delete error, got: %v", err)
 	}
@@ -1442,13 +1500,10 @@ func TestDeleteSourceVectors_DeleteError(t *testing.T) {
 
 func TestUpdateEmbeddingModel_ExecError(t *testing.T) {
 	ctx := context.Background()
-	svc := &SourceService{
-		pool:           selectiveFailingPool{Pool: sharedPool},
-		embeddingModel: "nomic-embed-text",
-	}
+	svc := &SourceService{pool: selectiveFailingPool{Pool: sharedPool}}
 
 	chunks := []model.Chunk{{ID: uuid.New()}}
-	err := svc.updateEmbeddingModel(ctx, chunks)
+	err := svc.updateEmbeddingModel(ctx, chunks, "nomic-embed-text")
 	if err == nil || !strings.Contains(err.Error(), "update embedding_model") {
 		t.Fatalf("expected update embedding_model error, got: %v", err)
 	}
@@ -1467,7 +1522,7 @@ func TestRunPipeline_EmptyFile(t *testing.T) {
 	}
 
 	svc := buildCustomSvc(ctx, t, sharedPool, &stubEmbedder{dim: 768}, stubVectorStore{})
-	total, err := svc.runPipeline(ctx, src, dir)
+	total, err := svc.runPipelineWithDefaults(ctx, src, dir)
 	if err != nil {
 		t.Fatalf("runPipeline with empty file: %v", err)
 	}
@@ -1483,7 +1538,7 @@ func TestRunPipeline_EmbedBatchError(t *testing.T) {
 	src := insertSrcRow(ctx, t, wid)
 
 	svc := buildCustomSvc(ctx, t, sharedPool, failingEmbedder{}, stubVectorStore{})
-	_, err := svc.runPipeline(ctx, src, dir)
+	_, err := svc.runPipelineWithDefaults(ctx, src, dir)
 	if err == nil || !strings.Contains(err.Error(), "embedding chunks from") {
 		t.Fatalf("expected embed batch error, got: %v", err)
 	}
@@ -1496,7 +1551,7 @@ func TestRunPipeline_UpsertError(t *testing.T) {
 	src := insertSrcRow(ctx, t, wid)
 
 	svc := buildCustomSvc(ctx, t, sharedPool, &stubEmbedder{dim: 768}, errorVectorStore{})
-	_, err := svc.runPipeline(ctx, src, dir)
+	_, err := svc.runPipelineWithDefaults(ctx, src, dir)
 	if err == nil || !strings.Contains(err.Error(), "upserting vectors for") {
 		t.Fatalf("expected upsert error, got: %v", err)
 	}
@@ -1512,7 +1567,7 @@ func TestRunPipeline_UpdateEmbeddingModelError(t *testing.T) {
 	// The chunker uses sharedPool directly (captured at construction time)
 	// so chunk INSERTs continue to succeed.
 	svc := buildCustomSvc(ctx, t, selectiveFailingPool{Pool: sharedPool}, &stubEmbedder{dim: 768}, stubVectorStore{})
-	_, err := svc.runPipeline(ctx, src, dir)
+	_, err := svc.runPipelineWithDefaults(ctx, src, dir)
 	if err == nil || !strings.Contains(err.Error(), "updating embedding model for") {
 		t.Fatalf("expected updateEmbeddingModel error, got: %v", err)
 	}
@@ -1528,7 +1583,7 @@ func TestRunPipeline_CaptionsStructuredChunks(t *testing.T) {
 
 	prov := &stubProvider{completion: "This diagram shows the browser connecting to the API, which connects to the database."}
 	svc := buildCustomSvcWithProvider(ctx, t, sharedPool, &stubEmbedder{dim: 768}, stubVectorStore{}, prov)
-	if _, err := svc.runPipeline(ctx, src, dir); err != nil {
+	if _, err := svc.runPipelineWithDefaults(ctx, src, dir); err != nil {
 		t.Fatalf("runPipeline: %v", err)
 	}
 	if prov.calls != 1 {
@@ -1558,7 +1613,7 @@ func TestRunPipeline_SkipsCaptioningForPlainProse(t *testing.T) {
 
 	prov := &stubProvider{completion: "should never be used"}
 	svc := buildCustomSvcWithProvider(ctx, t, sharedPool, &stubEmbedder{dim: 768}, stubVectorStore{}, prov)
-	if _, err := svc.runPipeline(ctx, src, dir); err != nil {
+	if _, err := svc.runPipelineWithDefaults(ctx, src, dir); err != nil {
 		t.Fatalf("runPipeline: %v", err)
 	}
 	if prov.calls != 0 {
@@ -1574,7 +1629,7 @@ func TestRunPipeline_CaptioningFailureDoesNotFailIngest(t *testing.T) {
 
 	prov := &stubProvider{err: errors.New("llm unavailable")}
 	svc := buildCustomSvcWithProvider(ctx, t, sharedPool, &stubEmbedder{dim: 768}, stubVectorStore{}, prov)
-	total, err := svc.runPipeline(ctx, src, dir)
+	total, err := svc.runPipelineWithDefaults(ctx, src, dir)
 	if err != nil {
 		t.Fatalf("expected runPipeline to succeed despite captioning failure, got: %v", err)
 	}
@@ -1602,7 +1657,7 @@ func TestRunPipeline_CaptionSkippedWhenEmpty(t *testing.T) {
 
 	prov := &stubProvider{completion: "   \n  "} // trims to empty
 	svc := buildCustomSvcWithProvider(ctx, t, sharedPool, &stubEmbedder{dim: 768}, stubVectorStore{}, prov)
-	if _, err := svc.runPipeline(ctx, src, dir); err != nil {
+	if _, err := svc.runPipelineWithDefaults(ctx, src, dir); err != nil {
 		t.Fatalf("runPipeline: %v", err)
 	}
 	if prov.calls != 1 {
@@ -1630,7 +1685,7 @@ func TestRunPipeline_CaptionPersistFailureDoesNotFailIngest(t *testing.T) {
 
 	prov := &stubProvider{completion: "A diagram of the browser calling the API."}
 	svc := buildCustomSvcWithProvider(ctx, t, contentUpdateFailingPool{Pool: sharedPool}, &stubEmbedder{dim: 768}, stubVectorStore{}, prov)
-	total, err := svc.runPipeline(ctx, src, dir)
+	total, err := svc.runPipelineWithDefaults(ctx, src, dir)
 	if err != nil {
 		t.Fatalf("expected runPipeline to succeed despite caption-persist failure, got: %v", err)
 	}

@@ -28,13 +28,13 @@ const captionPrompt = "The following is an excerpt from a technical document con
 // consistently. A captioning failure for one chunk is logged and skipped;
 // captions are an enrichment, not a correctness requirement, so one failure
 // must not fail the whole ingest.
-func (s *SourceService) captionStructuredChunks(ctx context.Context, chunks []model.Chunk) []model.Chunk {
+func (s *SourceService) captionStructuredChunks(ctx context.Context, chunks []model.Chunk, models ingestModels) []model.Chunk {
 	for i, ch := range chunks {
 		if !hasStructuredContent(ch.Content) {
 			continue
 		}
 
-		caption, err := s.generateCaption(ctx, ch.Content)
+		caption, err := s.generateCaption(ctx, ch.Content, models)
 		if err != nil {
 			slog.WarnContext(ctx, "chunk captioning failed, continuing without caption", "err", err, "chunk_id", ch.ID)
 			continue
@@ -53,10 +53,10 @@ func (s *SourceService) captionStructuredChunks(ctx context.Context, chunks []mo
 	return chunks
 }
 
-// generateCaption asks the configured LLM to describe content in prose.
-func (s *SourceService) generateCaption(ctx context.Context, content string) (string, error) {
-	resp, err := s.llmProvider.Complete(ctx, llm.CompletionRequest{
-		Model:    s.completionModel,
+// generateCaption asks the workspace's configured LLM to describe content in prose.
+func (s *SourceService) generateCaption(ctx context.Context, content string, models ingestModels) (string, error) {
+	resp, err := models.provider.Complete(ctx, llm.CompletionRequest{
+		Model:    models.model,
 		Messages: []llm.Message{{Role: llm.RoleUser, Content: captionPrompt + "\n\n" + content}},
 	})
 	if err != nil {

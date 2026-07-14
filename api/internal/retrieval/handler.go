@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jpgomesr/NeuralVault/internal/catalog"
 	"github.com/jpgomesr/NeuralVault/internal/conversations"
 	"github.com/jpgomesr/NeuralVault/internal/httperr"
 	"github.com/jpgomesr/NeuralVault/internal/llm"
@@ -38,6 +39,27 @@ type queryRequest struct {
 	// /query/stream, the completed answer) are persisted as messages on the
 	// conversation. Omitting it keeps the endpoint fully stateless.
 	ConversationID *uuid.UUID `json:"conversation_id,omitempty"`
+
+	// Provider and Model are optional and override the workspace's saved
+	// completion model for this request alone — the model picker in the chat
+	// composer, which switches models without persisting a setting. Both must be
+	// given together, and the workspace must already hold an API key for the
+	// provider: this selects among configured providers, it does not bypass
+	// configuration.
+	//
+	// There is no embedding equivalent by design: the embedder is bound to the
+	// workspace's Qdrant collection.
+	Provider catalog.Provider `json:"provider,omitempty"`
+	Model    string           `json:"model,omitempty"`
+}
+
+// llmSelection returns the per-request model override, or nil when the request
+// did not fully specify one.
+func (q queryRequest) llmSelection() *llm.Selection {
+	if q.Provider == "" || q.Model == "" {
+		return nil
+	}
+	return &llm.Selection{Provider: q.Provider, Model: q.Model}
 }
 
 // queryResultItem is a single hydrated chunk in the query response.
@@ -254,6 +276,7 @@ func (h *Handler) QueryStream(w http.ResponseWriter, r *http.Request) {
 			WorkspaceID: req.WorkspaceID,
 			Query:       req.Question,
 			TopK:        req.TopK,
+			LLM:         req.llmSelection(),
 		})
 		answerCh <- answerResult{chunks: chunks, stream: stream, err: err}
 	}()
