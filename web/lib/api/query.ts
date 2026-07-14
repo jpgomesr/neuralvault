@@ -1,5 +1,6 @@
 // Thin client over the Go API's /query/stream endpoint.
 
+import type { Provider } from "./models";
 import type { SourceChunk } from "../types";
 
 interface QueryHandlers {
@@ -7,6 +8,16 @@ interface QueryHandlers {
   onToken?: (text: string) => void;
   onDone?: () => void;
   onError?: (message: string) => void;
+}
+
+/**
+ * ModelOverride switches the model for a single question, without changing the
+ * workspace's saved default. Both fields are required together — the API ignores
+ * a half-specified override rather than guessing the other half.
+ */
+export interface ModelOverride {
+  provider: Provider;
+  model: string;
 }
 
 /**
@@ -22,13 +33,21 @@ export async function streamQuery(
   handlers: QueryHandlers,
   conversationId?: string,
   signal?: AbortSignal,
+  model?: ModelOverride,
 ): Promise<void> {
   const res = await fetch("/api/query/stream", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    // conversation_id is dropped from the JSON body when undefined, keeping
-    // /query/stream fully stateless for callers that don't pass one.
-    body: JSON.stringify({ workspace_id: workspaceId, question, conversation_id: conversationId }),
+    // conversation_id, provider and model are dropped from the JSON body when
+    // undefined, keeping /query/stream stateless (and on the workspace's default
+    // model) for callers that don't pass them.
+    body: JSON.stringify({
+      workspace_id: workspaceId,
+      question,
+      conversation_id: conversationId,
+      provider: model?.provider,
+      model: model?.model,
+    }),
     signal,
   });
   if (!res.ok || !res.body) {
