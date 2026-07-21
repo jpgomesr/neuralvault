@@ -315,15 +315,26 @@ func (f *fakeStore) HealthCheck(_ context.Context) error { return nil }
 // stubResolver satisfies both embedding.Resolver and llm.Resolver from fixed
 // fakes, so these tests exercise the ingest pipeline rather than the BYOK model
 // resolution that modelconfig owns and tests separately.
+//
+// resolveEmbedderErr/resolveLLMErr let a test simulate a workspace with a
+// misconfigured provider (e.g. no credential saved) — the failure path
+// indexInBackground/reingestInBackground/Delete must all handle without ever
+// reaching the pipeline or touching Qdrant.
 type stubResolver struct {
 	embedder   embedding.Embedder
 	collection string
 	embModel   string
 	provider   llm.Provider
 	llmModel   string
+
+	resolveEmbedderErr error
+	resolveLLMErr      error
 }
 
 func (r stubResolver) ResolveEmbedder(context.Context, uuid.UUID) (embedding.Embedder, embedding.Target, error) {
+	if r.resolveEmbedderErr != nil {
+		return nil, embedding.Target{}, r.resolveEmbedderErr
+	}
 	return r.embedder, embedding.Target{
 		Model:      r.embModel,
 		Collection: r.collection,
@@ -332,6 +343,9 @@ func (r stubResolver) ResolveEmbedder(context.Context, uuid.UUID) (embedding.Emb
 }
 
 func (r stubResolver) ResolveLLM(context.Context, uuid.UUID, *llm.Selection) (llm.Provider, string, error) {
+	if r.resolveLLMErr != nil {
+		return nil, "", r.resolveLLMErr
+	}
 	return r.provider, r.llmModel, nil
 }
 
@@ -544,6 +558,31 @@ func newSvcVS(ctx context.Context, t *testing.T, vs vectorstorage.Client) *Sourc
 		"test",
 		"nomic-embed-text",
 		"test-completion-model",
+	)
+}
+
+// newSvcWithResolver builds a SourceService backed by res instead of the
+// default always-succeeding stubResolver, so a test can simulate a workspace
+// whose provider credential is missing or invalid.
+func newSvcWithResolver(ctx context.Context, t *testing.T, res stubResolver) *SourceService {
+	t.Helper()
+	store, err := minioclient.New(ctx, sharedMinioCfg)
+	if err != nil {
+		t.Fatalf("minio client: %v", err)
+	}
+	splitters := map[chunking.ContentType]chunking.Splitter{
+		chunking.ContentTypeMarkdown:  markdown.New(),
+		chunking.ContentTypePlaintext: text.New(),
+	}
+	return NewSourceService(
+		sharedPool,
+		store,
+		sourcereader.NewFileReader(),
+		chunking.NewChunkService(sharedPool, splitters),
+		NewProgressBus(),
+		res,
+		stubVectorStore{},
+		res,
 	)
 }
 
@@ -1459,6 +1498,195 @@ func TestServiceDelete_RowDeleteError(t *testing.T) {
 	}
 	if _, err := svc.GetByID(ctx, src.ID); err != nil {
 		t.Errorf("expected source row to survive a failed row delete, got: %v", err)
+	}
+}
+
+func TestServiceDelete_ResolveEmbedderError(t *testing.T) {
+	ctx := context.Background()
+	wid := insertWS(ctx, t)
+	svc := newSvcVS(ctx, t, stubVectorStore{})
+
+	src, err := svc.Create(ctx, CreateRequest{WorkspaceID: wid, Name: "x"}, []FileUpload{
+		{Name: "a.md", Content: bytes.NewBufferString("hi"), Size: 2},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	awaitIndexed(ctx, t, svc, src.ID)
+
+	resolveErr := errors.New(`no api key saved for provider "anthropic"`)
+	broken := newSvcWithResolver(ctx, t, stubResolver{resolveEmbedderErr: resolveErr})
+
+	if err := broken.Delete(ctx, src.ID); err == nil {
+		t.Fatal("Delete with a broken resolver = nil error, want error")
+	}
+	// The failure must happen before anything destructive: the source row
+	// (and by extension its files and vectors) must survive.
+	if _, err := svc.GetByID(ctx, src.ID); err != nil {
+		t.Errorf("expected source row to survive a failed resolve, got: %v", err)
+	}
+}
+
+// ── BYOK model resolution failure paths ──────────────────────────────────────
+//
+// These mirror the ingest/re-ingest/delete tests above but with a resolver
+// that fails the way an unconfigured workspace does (e.g. no provider
+// credential saved) — the stubResolver used elsewhere in this file always
+// succeeds, so these are the only tests exercising resolveModels' own error
+// branch and its callers' handling of it.
+
+// TestServiceIndexInBackground_ResolveModelsError verifies a source whose
+// workspace has no usable provider is marked errored — not left stuck
+// "indexing" forever — and that the pipeline never runs.
+func TestServiceIndexInBackground_ResolveModelsError(t *testing.T) {
+	ctx := context.Background()
+	wid := insertWS(ctx, t)
+	resolveErr := errors.New(`no api key saved for provider "anthropic"`)
+	svc := newSvcWithResolver(ctx, t, stubResolver{resolveEmbedderErr: resolveErr})
+
+	const content = "# Hello\nOriginal content."
+	src, err := svc.Create(ctx, CreateRequest{WorkspaceID: wid, Name: "unconfigured"}, []FileUpload{
+		{Name: "file.md", Content: bytes.NewBufferString(content), Size: int64(len(content))},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	awaitError(ctx, t, svc, src.ID)
+
+	chunks, err := svc.ListChunks(ctx, src.ID)
+	if err != nil {
+		t.Fatalf("ListChunks: %v", err)
+	}
+	if len(chunks) != 0 {
+		t.Errorf("expected no chunks to be created, got %d", len(chunks))
+	}
+}
+
+// TestServiceReingest_ResolveModelsError mirrors the above for the re-ingest
+// path: if a workspace's provider breaks after a source was already indexed,
+// resolveModels is called (and must fail) before anything is deleted, so the
+// existing chunks survive rather than being emptied and left unsearchable.
+func TestServiceReingest_ResolveModelsError(t *testing.T) {
+	ctx := context.Background()
+	wid := insertWS(ctx, t)
+	svc := newSvcVS(ctx, t, stubVectorStore{})
+
+	const content = "# Hello\nOriginal content."
+	src, err := svc.Create(ctx, CreateRequest{WorkspaceID: wid, Name: "goes-unconfigured"}, []FileUpload{
+		{Name: "file.md", Content: bytes.NewBufferString(content), Size: int64(len(content))},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	awaitIndexed(ctx, t, svc, src.ID)
+
+	before, err := svc.ListChunks(ctx, src.ID)
+	if err != nil {
+		t.Fatalf("ListChunks: %v", err)
+	}
+	if len(before) == 0 {
+		t.Fatal("expected chunks after initial indexing")
+	}
+
+	resolveErr := errors.New(`no api key saved for provider "anthropic"`)
+	broken := newSvcWithResolver(ctx, t, stubResolver{resolveEmbedderErr: resolveErr})
+	if err := broken.Ingest(ctx, src.ID); err != nil {
+		t.Fatalf("Ingest: %v", err)
+	}
+	awaitError(ctx, t, broken, src.ID)
+
+	after, err := svc.ListChunks(ctx, src.ID)
+	if err != nil {
+		t.Fatalf("ListChunks after failed re-ingest: %v", err)
+	}
+	if len(after) != len(before) {
+		t.Errorf("chunks = %d after failed re-ingest, want unchanged %d (existing chunks must survive a resolve failure)", len(after), len(before))
+	}
+}
+
+// ── ReindexWorkspace ──────────────────────────────────────────────────────────
+
+// TestReindexWorkspace_QueuesAllSources verifies every source in a workspace
+// is re-ingested and the reported count matches — the flow SetEmbedding's
+// caller runs after a workspace switches its embedding model.
+func TestReindexWorkspace_QueuesAllSources(t *testing.T) {
+	ctx := context.Background()
+	wid := insertWS(ctx, t)
+	svc := newSvcVS(ctx, t, stubVectorStore{})
+
+	const content = "# Hello\nOriginal content."
+	var srcs []model.Source
+	for i := 0; i < 2; i++ {
+		src, err := svc.Create(ctx, CreateRequest{WorkspaceID: wid, Name: fmt.Sprintf("source-%d", i)}, []FileUpload{
+			{Name: "file.md", Content: bytes.NewBufferString(content), Size: int64(len(content))},
+		})
+		if err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		awaitIndexed(ctx, t, svc, src.ID)
+		srcs = append(srcs, *src)
+	}
+
+	queued, err := svc.ReindexWorkspace(ctx, wid)
+	if err != nil {
+		t.Fatalf("ReindexWorkspace: %v", err)
+	}
+	if queued != len(srcs) {
+		t.Errorf("queued = %d, want %d", queued, len(srcs))
+	}
+	for _, src := range srcs {
+		awaitIndexed(ctx, t, svc, src.ID)
+	}
+}
+
+// TestReindexWorkspace_SkipsAlreadyIndexing verifies a source already being
+// indexed (e.g. by a concurrent run) is skipped rather than failing the whole
+// call — matching the doc comment on ReindexWorkspace.
+func TestReindexWorkspace_SkipsAlreadyIndexing(t *testing.T) {
+	ctx := context.Background()
+	wid := insertWS(ctx, t)
+	svc := newSvcVS(ctx, t, stubVectorStore{})
+
+	const content = "# Hello\nOriginal content."
+	src, err := svc.Create(ctx, CreateRequest{WorkspaceID: wid, Name: "busy"}, []FileUpload{
+		{Name: "file.md", Content: bytes.NewBufferString(content), Size: int64(len(content))},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	awaitIndexed(ctx, t, svc, src.ID)
+
+	// Force the source into "indexing" so claimForIndexing rejects it, the way
+	// a concurrent ingest run would.
+	if _, err := sharedPool.Exec(ctx, "UPDATE sources SET status = $1 WHERE id = $2", model.SourceStatusIndexing, src.ID); err != nil {
+		t.Fatalf("forcing indexing status: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = sharedPool.Exec(context.Background(), "UPDATE sources SET status = $1 WHERE id = $2", model.SourceStatusIndexed, src.ID)
+	})
+
+	queued, err := svc.ReindexWorkspace(ctx, wid)
+	if err != nil {
+		t.Fatalf("ReindexWorkspace: %v", err)
+	}
+	if queued != 0 {
+		t.Errorf("queued = %d, want 0 (the busy source must be skipped, not counted)", queued)
+	}
+}
+
+// TestReindexWorkspace_EmptyWorkspace verifies a workspace with no sources
+// queues nothing and returns no error.
+func TestReindexWorkspace_EmptyWorkspace(t *testing.T) {
+	ctx := context.Background()
+	wid := insertWS(ctx, t)
+	svc := newSvcVS(ctx, t, stubVectorStore{})
+
+	queued, err := svc.ReindexWorkspace(ctx, wid)
+	if err != nil {
+		t.Fatalf("ReindexWorkspace: %v", err)
+	}
+	if queued != 0 {
+		t.Errorf("queued = %d, want 0", queued)
 	}
 }
 
