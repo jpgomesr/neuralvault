@@ -1,0 +1,13 @@
+[extend]
+useDefault = true
+
+[allowlist]
+  description = "Known non-secret placeholder values used in local-dev examples and tests"
+  regexes = [
+    # The documented dev-only AES-256 key from api/.env.example
+    # (SECRETS_ENCRYPTION_KEY) and reused verbatim by config/store tests that
+    # need a syntactically valid key. It base64-decodes to the literal string
+    # "dev-only-key-do-not-use-in-prod!" — self-evidently not a real secret,
+    # and never used outside an ephemeral local/test environment.
+    '''ZGV2LW9ubHkta2V5LWRvLW5vdC11c2UtaW4tcHJvZCE=''',
+  ]
