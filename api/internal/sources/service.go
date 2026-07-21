@@ -76,17 +76,18 @@ type Service interface {
 
 // SourceService is the concrete implementation of Service.
 type SourceService struct {
-	pool            storage.Pool
-	store           objectstorage.Client
-	reader          sourcereader.Reader
-	chunker         *chunking.ChunkService
-	bus             *ProgressBus
-	embedder        embedding.Embedder
-	vectorStore     vectorstorage.Client
-	llmProvider     llm.Provider
-	collectionName  string
-	embeddingModel  string
-	completionModel string
+	pool        storage.Pool
+	store       objectstorage.Client
+	reader      sourcereader.Reader
+	chunker     *chunking.ChunkService
+	bus         *ProgressBus
+	vectorStore vectorstorage.Client
+
+	// The embedder and the LLM provider are resolved per workspace rather than
+	// injected once, because each workspace can bring its own provider and key
+	// (BYOK) and pick its own model.
+	embedders embedding.Resolver
+	providers llm.Resolver
 }
 
 // NewSourceService constructs a SourceService.
@@ -96,26 +97,57 @@ func NewSourceService(
 	reader sourcereader.Reader,
 	chunker *chunking.ChunkService,
 	bus *ProgressBus,
-	embedder embedding.Embedder,
+	embedders embedding.Resolver,
 	vectorStore vectorstorage.Client,
-	llmProvider llm.Provider,
-	collectionName string,
-	embeddingModel string,
-	completionModel string,
+	providers llm.Resolver,
 ) *SourceService {
 	return &SourceService{
-		pool:            pool,
-		store:           store,
-		reader:          reader,
-		chunker:         chunker,
-		bus:             bus,
-		embedder:        embedder,
-		vectorStore:     vectorStore,
-		llmProvider:     llmProvider,
-		collectionName:  collectionName,
-		embeddingModel:  embeddingModel,
-		completionModel: completionModel,
+		pool:        pool,
+		store:       store,
+		reader:      reader,
+		chunker:     chunker,
+		bus:         bus,
+		vectorStore: vectorStore,
+		embedders:   embedders,
+		providers:   providers,
 	}
+}
+
+// ingestModels bundles everything one ingest run needs from a workspace's model
+// configuration.
+//
+// They are resolved once per run and threaded through the pipeline rather than
+// re-resolved per chunk: a run must not straddle a settings change, or it would
+// write vectors from two different models into the same collection.
+type ingestModels struct {
+	embedder embedding.Embedder
+	target   embedding.Target
+	provider llm.Provider
+	model    string
+}
+
+// resolveModels loads a workspace's embedder and completion provider.
+//
+// Ingest runs in a background goroutine with no HTTP request behind it, so there
+// is never a per-request model override here — always the workspace's saved
+// default.
+func (s *SourceService) resolveModels(ctx context.Context, workspaceID uuid.UUID) (ingestModels, error) {
+	embedder, target, err := s.embedders.ResolveEmbedder(ctx, workspaceID)
+	if err != nil {
+		return ingestModels{}, fmt.Errorf("resolving embedder: %w", err)
+	}
+
+	provider, completionModel, err := s.providers.ResolveLLM(ctx, workspaceID, nil)
+	if err != nil {
+		return ingestModels{}, fmt.Errorf("resolving llm provider: %w", err)
+	}
+
+	return ingestModels{
+		embedder: embedder,
+		target:   target,
+		provider: provider,
+		model:    completionModel,
+	}, nil
 }
 
 // Create uploads files to MinIO, creates the Source record, and kicks off
@@ -193,6 +225,38 @@ func (s *SourceService) Ingest(ctx context.Context, sourceID uuid.UUID) error {
 	return nil
 }
 
+// ReindexWorkspace re-ingests every source in a workspace, returning how many
+// were queued.
+//
+// This is what a workspace runs after changing its embedding model: each source's
+// vectors were produced by the previous model and live in that model's Qdrant
+// collection, so they are unreachable from the new one until re-embedded.
+//
+// Sources already indexing are skipped rather than failing the whole call —
+// claimForIndexing rejects them, and they are re-embedded by the run already
+// under way or can be retried individually.
+func (s *SourceService) ReindexWorkspace(ctx context.Context, workspaceID uuid.UUID) (int, error) {
+	sources, err := s.List(ctx, workspaceID)
+	if err != nil {
+		return 0, fmt.Errorf("listing sources: %w", err)
+	}
+
+	queued := 0
+	for _, source := range sources {
+		err := s.Ingest(ctx, source.ID)
+		if errors.Is(err, ErrAlreadyIndexing) {
+			slog.InfoContext(ctx, "skipping source already indexing", "source_id", source.ID, "workspace_id", workspaceID)
+			continue
+		}
+		if err != nil {
+			return queued, fmt.Errorf("re-ingesting source %s: %w", source.ID, err)
+		}
+		queued++
+	}
+
+	return queued, nil
+}
+
 // Delete removes source, its vectors, and its object-storage files. The
 // Postgres row is deleted last so a failure partway through leaves the source
 // visible (and re-deletable) rather than silently orphaning its content.
@@ -202,7 +266,12 @@ func (s *SourceService) Delete(ctx context.Context, sourceID uuid.UUID) error {
 		return fmt.Errorf("loading source: %w", err)
 	}
 
-	if err := s.deleteSourceVectors(ctx, sourceID); err != nil {
+	_, target, err := s.embedders.ResolveEmbedder(ctx, source.WorkspaceID)
+	if err != nil {
+		return fmt.Errorf("resolving embedder: %w", err)
+	}
+
+	if err := s.deleteSourceVectors(ctx, sourceID, target.Collection); err != nil {
 		return err
 	}
 
@@ -331,7 +400,18 @@ func (s *SourceService) indexInBackground(source model.Source, tempDir string) {
 	defer os.RemoveAll(tempDir) //nolint:errcheck
 
 	start := time.Now()
-	total, err := s.runPipeline(ctx, source, tempDir)
+
+	models, err := s.resolveModels(ctx, source.WorkspaceID)
+	if err != nil {
+		slog.ErrorContext(ctx, "indexing failed", "err", err, "source_id", source.ID, "workspace_id", source.WorkspaceID)
+		if err := s.updateStatus(ctx, source.ID, model.SourceStatusError); err != nil {
+			slog.ErrorContext(ctx, "failed to update source status", "err", err, "source_id", source.ID)
+		}
+		s.bus.publish(source.ID, ProgressEvent{Type: EventError, Error: err.Error()})
+		return
+	}
+
+	total, err := s.runPipeline(ctx, source, tempDir, models)
 	if err != nil {
 		slog.ErrorContext(ctx, "indexing failed", "err", err, "source_id", source.ID, "workspace_id", source.WorkspaceID)
 		if err := s.updateStatus(ctx, source.ID, model.SourceStatusError); err != nil {
@@ -361,12 +441,21 @@ func (s *SourceService) reingestInBackground(source model.Source) {
 
 	start := time.Now()
 
+	// Resolved before anything is deleted: if the workspace's provider is
+	// misconfigured, the source keeps its existing chunks and vectors rather than
+	// being emptied and left unsearchable.
+	models, err := s.resolveModels(ctx, source.WorkspaceID)
+	if err != nil {
+		s.failReingest(ctx, source, err)
+		return
+	}
+
 	if err := s.chunker.DeleteChunks(ctx, source.ID); err != nil {
 		s.failReingest(ctx, source, err)
 		return
 	}
 
-	if err := s.deleteSourceVectors(ctx, source.ID); err != nil {
+	if err := s.deleteSourceVectors(ctx, source.ID, models.target.Collection); err != nil {
 		s.failReingest(ctx, source, err)
 		return
 	}
@@ -391,7 +480,7 @@ func (s *SourceService) reingestInBackground(source model.Source) {
 		}
 	}
 
-	total, err := s.runPipeline(ctx, source, tempDir)
+	total, err := s.runPipeline(ctx, source, tempDir, models)
 	if err != nil {
 		s.failReingest(ctx, source, err)
 		return
@@ -422,7 +511,7 @@ func (s *SourceService) failReingest(ctx context.Context, source model.Source, c
 // runPipeline reads source content, chunks it, generates embeddings, and upserts
 // vectors into Qdrant. Publishes an EventIndexing event per file processed.
 // Returns total chunks created.
-func (s *SourceService) runPipeline(ctx context.Context, source model.Source, rootPath string) (int, error) {
+func (s *SourceService) runPipeline(ctx context.Context, source model.Source, rootPath string, models ingestModels) (int, error) {
 	requests, err := s.reader.Read(ctx, source, rootPath)
 	if err != nil {
 		return 0, fmt.Errorf("reading source: %w", err)
@@ -438,18 +527,18 @@ func (s *SourceService) runPipeline(ctx context.Context, source model.Source, ro
 			return 0, fmt.Errorf("chunking %q: %w", req.FilePath, err)
 		}
 
-		chunks = s.captionStructuredChunks(ctx, chunks)
+		chunks = s.captionStructuredChunks(ctx, chunks, models)
 
 		if len(chunks) > 0 {
 			embChunks := toEmbeddingChunks(chunks)
-			embeddings, err := s.embedder.EmbedBatch(ctx, embChunks)
+			embeddings, err := models.embedder.EmbedBatch(ctx, embChunks)
 			if err != nil {
 				return 0, fmt.Errorf("embedding chunks from %q: %w", req.FilePath, err)
 			}
-			if err := s.upsertChunkVectors(ctx, chunks, embeddings); err != nil {
+			if err := s.upsertChunkVectors(ctx, chunks, embeddings, models.target.Collection); err != nil {
 				return 0, fmt.Errorf("upserting vectors for %q: %w", req.FilePath, err)
 			}
-			if err := s.updateEmbeddingModel(ctx, chunks); err != nil {
+			if err := s.updateEmbeddingModel(ctx, chunks, models.target.Model); err != nil {
 				return 0, fmt.Errorf("updating embedding model for %q: %w", req.FilePath, err)
 			}
 		}
@@ -480,7 +569,11 @@ func toEmbeddingChunks(chunks []model.Chunk) []embedding.Chunk {
 
 // upsertChunkVectors validates embeddings and upserts them into Qdrant with a
 // minimal payload containing only the IDs needed for workspace-scoped filtering.
-func (s *SourceService) upsertChunkVectors(ctx context.Context, chunks []model.Chunk, embeddings []embedding.Embedding) error {
+//
+// collection is the workspace's collection, which depends on its embedding model
+// — passing it in rather than reading a field is what keeps vectors from one
+// model out of another model's collection.
+func (s *SourceService) upsertChunkVectors(ctx context.Context, chunks []model.Chunk, embeddings []embedding.Embedding, collection string) error {
 	if len(embeddings) != len(chunks) {
 		return fmt.Errorf("embedding count mismatch: got %d embeddings for %d chunks", len(embeddings), len(chunks))
 	}
@@ -505,7 +598,7 @@ func (s *SourceService) upsertChunkVectors(ctx context.Context, chunks []model.C
 	}
 
 	if _, err := s.vectorStore.Upsert(ctx, &qdrantpb.UpsertPoints{
-		CollectionName: s.collectionName,
+		CollectionName: collection,
 		Points:         points,
 	}); err != nil {
 		return fmt.Errorf("qdrant upsert: %w", err)
@@ -518,9 +611,9 @@ func (s *SourceService) upsertChunkVectors(ctx context.Context, chunks []model.C
 // to drop the previous generation of vectors before new chunks are upserted;
 // without it, re-ingested chunks get fresh UUIDs, never collide with the old point
 // IDs, and the previous generation leaks in Qdrant forever.
-func (s *SourceService) deleteSourceVectors(ctx context.Context, sourceID uuid.UUID) error {
+func (s *SourceService) deleteSourceVectors(ctx context.Context, sourceID uuid.UUID, collection string) error {
 	_, err := s.vectorStore.Delete(ctx, &qdrantpb.DeletePoints{
-		CollectionName: s.collectionName,
+		CollectionName: collection,
 		Points: qdrantpb.NewPointsSelectorFilter(&qdrantpb.Filter{
 			Must: []*qdrantpb.Condition{qdrantpb.NewMatch("source_id", sourceID.String())},
 		}),
@@ -532,14 +625,14 @@ func (s *SourceService) deleteSourceVectors(ctx context.Context, sourceID uuid.U
 }
 
 // updateEmbeddingModel records the model name used to generate embeddings on each chunk row.
-func (s *SourceService) updateEmbeddingModel(ctx context.Context, chunks []model.Chunk) error {
+func (s *SourceService) updateEmbeddingModel(ctx context.Context, chunks []model.Chunk, embeddingModel string) error {
 	ids := make([]uuid.UUID, len(chunks))
 	for i, c := range chunks {
 		ids[i] = c.ID
 	}
 	_, err := s.pool.Exec(ctx,
 		`UPDATE chunks SET embedding_model = $1 WHERE id = ANY($2)`,
-		s.embeddingModel, ids,
+		embeddingModel, ids,
 	)
 	if err != nil {
 		return fmt.Errorf("update embedding_model: %w", err)

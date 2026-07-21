@@ -24,6 +24,7 @@ type Config struct {
 	MinIO    MinIO    `envconfig:"MINIO"`
 	Auth     Auth     `envconfig:"AUTH"`
 	Reranker Reranker `envconfig:"RERANKER"`
+	Secrets  Secrets  `envconfig:"SECRETS"`
 }
 
 // Server contains HTTP server configuration.
@@ -70,12 +71,25 @@ type Qdrant struct {
 	VectorSize     uint64 `envconfig:"VECTOR_SIZE" validate:"required"`
 }
 
-// Ollama contains local-LLM configuration.
+// Ollama contains the server's default local-LLM configuration.
+//
+// URL is the switch: leaving it empty disables Ollama entirely, so the server
+// boots without it and has no fallback provider. Every workspace must then
+// configure its own provider (BYOK) — see internal/modelconfig. When URL is
+// set, the other three fields become required, since a partially configured
+// Ollama would fail on first use instead of at startup.
 type Ollama struct {
-	Port            int    `envconfig:"PORT" validate:"required,gte=1,lte=65535"`
-	URL             string `envconfig:"URL" validate:"required"`
-	EmbeddingModel  string `envconfig:"EMBEDDING_MODEL" validate:"required"`
-	CompletionModel string `envconfig:"COMPLETION_MODEL" validate:"required"`
+	Port            int    `envconfig:"PORT" validate:"required_with=URL,omitempty,gte=1,lte=65535"`
+	URL             string `envconfig:"URL"`
+	EmbeddingModel  string `envconfig:"EMBEDDING_MODEL" validate:"required_with=URL"`
+	CompletionModel string `envconfig:"COMPLETION_MODEL" validate:"required_with=URL"`
+}
+
+// Enabled reports whether the server has a default Ollama provider. When
+// false, there is no fallback: every workspace must configure its own
+// provider.
+func (o Ollama) Enabled() bool {
+	return o.URL != ""
 }
 
 // MinIO contains object storage configuration.
@@ -95,6 +109,18 @@ type MinIO struct {
 type Reranker struct {
 	URL   string `envconfig:"URL" validate:"required"`
 	Model string `envconfig:"MODEL" validate:"required"`
+}
+
+// Secrets contains the master key used to encrypt secrets at rest, currently
+// the per-workspace provider API keys behind BYOK (see internal/crypto).
+type Secrets struct {
+	// EncryptionKey is a base64-encoded 32-byte key (AES-256-GCM). The length
+	// is validated as the *encoded* form: 32 raw bytes is always 44 base64
+	// characters. Generate one with `openssl rand -base64 32`.
+	//
+	// Rotating this key makes every stored API key undecryptable; workspaces
+	// must re-enter them.
+	EncryptionKey string `envconfig:"ENCRYPTION_KEY" validate:"required,len=44"`
 }
 
 // Auth contains OpenID Connect (OIDC) configuration for the authorization-code

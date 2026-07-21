@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Check, ChevronDown, Plus, Settings } from "lucide-react";
 import CreateWorkspaceDialog from "@/components/CreateWorkspaceDialog";
+import ModelSettingsDialog from "@/components/ModelSettingsDialog";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -21,6 +22,7 @@ import { useActiveWorkspace } from "@/lib/workspace-context";
 export default function WorkspaceSwitcher() {
   const { workspaces, activeId, setActiveId } = useActiveWorkspace();
   const [createOpen, setCreateOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const active = workspaces.find((w) => w.ID === activeId);
 
   return (
@@ -40,10 +42,9 @@ export default function WorkspaceSwitcher() {
             </DropdownMenuItem>
           ))}
           {workspaces.length > 0 && <DropdownMenuSeparator />}
-          <DropdownMenuItem disabled title="Coming soon">
+          <DropdownMenuItem disabled={!activeId} onSelect={() => setSettingsOpen(true)}>
             <Settings className="size-3.5" />
-            <span className="flex-1">Workspace settings</span>
-            <span className="text-xs text-muted-foreground">Soon</span>
+            <span className="flex-1">Model settings</span>
           </DropdownMenuItem>
           <DropdownMenuItem onSelect={() => setCreateOpen(true)}>
             <Plus className="size-3.5" />
@@ -57,6 +58,14 @@ export default function WorkspaceSwitcher() {
         onOpenChange={setCreateOpen}
         onCreated={(ws) => setActiveId(ws.ID)}
       />
+
+      {activeId && (
+        <ModelSettingsDialog
+          workspaceId={activeId}
+          open={settingsOpen}
+          onOpenChange={setSettingsOpen}
+        />
+      )}
     </>
   );
 }

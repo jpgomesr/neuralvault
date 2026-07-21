@@ -710,6 +710,362 @@ const docTemplate = `{
                     }
                 }
             }
+        },
+        "/workspaces/{workspace_id}/model-settings": {
+            "get": {
+                "description": "Returns the workspace's chosen completion and embedding models. Empty fields mean it uses the server default (Ollama).",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "modelconfig"
+                ],
+                "summary": "Get a workspace's model settings",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Workspace ID",
+                        "name": "workspace_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/modelconfig.settingsResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request"
+                    },
+                    "401": {
+                        "description": "Unauthorized"
+                    },
+                    "403": {
+                        "description": "Forbidden"
+                    },
+                    "500": {
+                        "description": "Internal Server Error"
+                    }
+                }
+            }
+        },
+        "/workspaces/{workspace_id}/model-settings/embedding": {
+            "put": {
+                "description": "Sets the embedding provider and model. The provider is probed for its vector dimension and a matching Qdrant collection is created. Existing sources were embedded with the previous model and are NOT migrated: the response reports how many need re-indexing, and until they are, retrieval finds nothing.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "modelconfig"
+                ],
+                "summary": "Set the workspace's embedding model",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Workspace ID",
+                        "name": "workspace_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/modelconfig.EmbeddingChange"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request"
+                    },
+                    "401": {
+                        "description": "Unauthorized"
+                    },
+                    "403": {
+                        "description": "Forbidden"
+                    },
+                    "500": {
+                        "description": "Internal Server Error"
+                    },
+                    "502": {
+                        "description": "Bad Gateway"
+                    }
+                }
+            }
+        },
+        "/workspaces/{workspace_id}/model-settings/llm": {
+            "put": {
+                "description": "Sets the default provider and model used to answer queries. Changing it affects only the next query — nothing is re-indexed.",
+                "consumes": [
+                    "application/json"
+                ],
+                "tags": [
+                    "modelconfig"
+                ],
+                "summary": "Set the workspace's completion model",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Workspace ID",
+                        "name": "workspace_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "Bad Request"
+                    },
+                    "401": {
+                        "description": "Unauthorized"
+                    },
+                    "403": {
+                        "description": "Forbidden"
+                    },
+                    "500": {
+                        "description": "Internal Server Error"
+                    }
+                }
+            }
+        },
+        "/workspaces/{workspace_id}/providers": {
+            "get": {
+                "description": "Returns the provider catalog annotated with which providers this workspace has an API key for. The key itself is never returned, only a 4-character hint.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "modelconfig"
+                ],
+                "summary": "List model providers",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Workspace ID",
+                        "name": "workspace_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/modelconfig.ProviderStatus"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request"
+                    },
+                    "401": {
+                        "description": "Unauthorized"
+                    },
+                    "403": {
+                        "description": "Forbidden"
+                    },
+                    "500": {
+                        "description": "Internal Server Error"
+                    }
+                }
+            }
+        },
+        "/workspaces/{workspace_id}/providers/{provider}/credential": {
+            "put": {
+                "description": "Stores an API key for a provider (BYOK), encrypted at rest. The key is validated against the provider before being saved, so an invalid key is rejected here rather than failing later mid-answer.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "modelconfig"
+                ],
+                "summary": "Save a provider API key",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Workspace ID",
+                        "name": "workspace_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Provider ID",
+                        "name": "provider",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "Bad Request"
+                    },
+                    "401": {
+                        "description": "Unauthorized"
+                    },
+                    "403": {
+                        "description": "Forbidden"
+                    },
+                    "500": {
+                        "description": "Internal Server Error"
+                    },
+                    "502": {
+                        "description": "Bad Gateway"
+                    }
+                }
+            },
+            "delete": {
+                "description": "Removes the workspace's stored API key for a provider.",
+                "tags": [
+                    "modelconfig"
+                ],
+                "summary": "Delete a provider API key",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Workspace ID",
+                        "name": "workspace_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Provider ID",
+                        "name": "provider",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "Bad Request"
+                    },
+                    "401": {
+                        "description": "Unauthorized"
+                    },
+                    "403": {
+                        "description": "Forbidden"
+                    },
+                    "500": {
+                        "description": "Internal Server Error"
+                    }
+                }
+            }
+        },
+        "/workspaces/{workspace_id}/providers/{provider}/models": {
+            "get": {
+                "description": "Lists the models the workspace's API key can reach, fetched live from the provider rather than from a hardcoded list.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "modelconfig"
+                ],
+                "summary": "List a provider's models",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Workspace ID",
+                        "name": "workspace_id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Provider ID",
+                        "name": "provider",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/types.ModelInfo"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request"
+                    },
+                    "401": {
+                        "description": "Unauthorized"
+                    },
+                    "403": {
+                        "description": "Forbidden"
+                    },
+                    "500": {
+                        "description": "Internal Server Error"
+                    },
+                    "502": {
+                        "description": "Bad Gateway"
+                    }
+                }
+            }
+        },
+        "/workspaces/{workspace_id}/reindex": {
+            "post": {
+                "description": "Queues re-ingestion of all the workspace's sources, re-embedding them with the current embedding model. Required after changing the embedding model, since a source's existing vectors belong to the previous model's collection. Returns immediately; progress streams per source over /sources/{id}/status.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "modelconfig"
+                ],
+                "summary": "Re-index every source in the workspace",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Workspace ID",
+                        "name": "workspace_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "202": {
+                        "description": "Accepted",
+                        "schema": {
+                            "$ref": "#/definitions/modelconfig.reindexResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request"
+                    },
+                    "401": {
+                        "description": "Unauthorized"
+                    },
+                    "403": {
+                        "description": "Forbidden"
+                    },
+                    "500": {
+                        "description": "Internal Server Error"
+                    }
+                }
+            }
         }
     },
     "definitions": {
@@ -724,6 +1080,27 @@ const docTemplate = `{
                 }
             }
         },
+        "catalog.Provider": {
+            "type": "string",
+            "enum": [
+                "ollama",
+                "anthropic",
+                "gemini",
+                "openrouter",
+                "groq",
+                "github",
+                "openai"
+            ],
+            "x-enum-varnames": [
+                "Ollama",
+                "Anthropic",
+                "Gemini",
+                "OpenRouter",
+                "Groq",
+                "GitHub",
+                "OpenAI"
+            ]
+        },
         "health.Report": {
             "type": "object",
             "properties": {
@@ -734,6 +1111,107 @@ const docTemplate = `{
                     }
                 },
                 "status": {
+                    "type": "string"
+                }
+            }
+        },
+        "modelconfig.EmbeddingChange": {
+            "type": "object",
+            "properties": {
+                "collection": {
+                    "description": "Collection is the Qdrant collection the workspace's vectors now live in.",
+                    "type": "string"
+                },
+                "dimensions": {
+                    "description": "Dimensions is the vector size discovered by probing the provider.",
+                    "type": "integer"
+                },
+                "reindex_required": {
+                    "description": "ReindexRequired is true when the workspace has sources that were embedded\nwith a different model. Until they are re-indexed, the new collection is\nempty and retrieval finds nothing.",
+                    "type": "boolean"
+                },
+                "stale_sources": {
+                    "description": "StaleSources is how many sources need re-indexing.",
+                    "type": "integer"
+                }
+            }
+        },
+        "modelconfig.ProviderStatus": {
+            "type": "object",
+            "properties": {
+                "api_key_hint": {
+                    "description": "APIKeyHint is the last few characters of the stored key, for display. The\nkey itself is never returned.",
+                    "type": "string"
+                },
+                "base_url": {
+                    "description": "BaseURL is the endpoint in effect: the workspace's override if it set one,\notherwise the catalog default.",
+                    "type": "string"
+                },
+                "configured": {
+                    "description": "Configured reports whether the workspace has a usable credential. Always\ntrue for providers that need no key.",
+                    "type": "boolean"
+                },
+                "free_tier": {
+                    "description": "FreeTier flags providers with a usable no-cost tier, which is what makes\nthem viable for local development without running Ollama.",
+                    "type": "boolean"
+                },
+                "name": {
+                    "description": "Name is the human-readable label shown in the UI.",
+                    "type": "string"
+                },
+                "provider": {
+                    "$ref": "#/definitions/catalog.Provider"
+                },
+                "requires_api_key": {
+                    "description": "RequiresAPIKey is false only for Ollama, which is unauthenticated and\nserver-local.",
+                    "type": "boolean"
+                },
+                "supports_completions": {
+                    "description": "SupportsCompletions and SupportsEmbeddings gate which dropdowns a\nprovider may appear in. Anthropic has no embeddings API at all, and\nGroq/OpenRouter/GitHub Models serve chat models only — offering them as\nan embedding backend would produce a runtime failure at index time.",
+                    "type": "boolean"
+                },
+                "supports_embeddings": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "modelconfig.reindexResponse": {
+            "type": "object",
+            "properties": {
+                "queued": {
+                    "type": "integer"
+                }
+            }
+        },
+        "modelconfig.settingsResponse": {
+            "type": "object",
+            "properties": {
+                "embedding_dimensions": {
+                    "type": "integer"
+                },
+                "embedding_model": {
+                    "type": "string"
+                },
+                "embedding_provider": {
+                    "$ref": "#/definitions/catalog.Provider"
+                },
+                "llm_model": {
+                    "type": "string"
+                },
+                "llm_provider": {
+                    "$ref": "#/definitions/catalog.Provider"
+                }
+            }
+        },
+        "types.ModelInfo": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "description": "ID is the value to send as CompletionRequest.Model.",
+                    "type": "string"
+                },
+                "name": {
+                    "description": "Name is a human-readable label. Providers that expose no display name\nrepeat the ID here.",
                     "type": "string"
                 }
             }

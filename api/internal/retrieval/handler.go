@@ -10,11 +10,13 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jpgomesr/NeuralVault/internal/catalog"
 	"github.com/jpgomesr/NeuralVault/internal/conversations"
 	"github.com/jpgomesr/NeuralVault/internal/httperr"
 	"github.com/jpgomesr/NeuralVault/internal/llm"
 	"github.com/jpgomesr/NeuralVault/internal/logger"
 	"github.com/jpgomesr/NeuralVault/internal/model"
+	"github.com/jpgomesr/NeuralVault/internal/modelconfig"
 	"github.com/jpgomesr/NeuralVault/internal/workspaces"
 )
 
@@ -38,6 +40,27 @@ type queryRequest struct {
 	// /query/stream, the completed answer) are persisted as messages on the
 	// conversation. Omitting it keeps the endpoint fully stateless.
 	ConversationID *uuid.UUID `json:"conversation_id,omitempty"`
+
+	// Provider and Model are optional and override the workspace's saved
+	// completion model for this request alone — the model picker in the chat
+	// composer, which switches models without persisting a setting. Both must be
+	// given together, and the workspace must already hold an API key for the
+	// provider: this selects among configured providers, it does not bypass
+	// configuration.
+	//
+	// There is no embedding equivalent by design: the embedder is bound to the
+	// workspace's Qdrant collection.
+	Provider catalog.Provider `json:"provider,omitempty"`
+	Model    string           `json:"model,omitempty"`
+}
+
+// llmSelection returns the per-request model override, or nil when the request
+// did not fully specify one.
+func (q queryRequest) llmSelection() *llm.Selection {
+	if q.Provider == "" || q.Model == "" {
+		return nil
+	}
+	return &llm.Selection{Provider: q.Provider, Model: q.Model}
 }
 
 // queryResultItem is a single hydrated chunk in the query response.
@@ -86,6 +109,18 @@ func (h *Handler) ensureConversationInWorkspace(w http.ResponseWriter, r *http.R
 		return false
 	}
 	return true
+}
+
+// isCredentialConfigError reports whether err is a workspace configuration
+// gap — no provider configured, or no API key saved for the selected one —
+// rather than a genuine internal failure. modelconfig.ErrCredentialNotFound
+// and ErrNoDefaultProvider surface from the embedder/LLM resolvers on every
+// query and carry a message that's safe to return to the client, same as
+// modelconfig's own writeServiceError treats them for the settings endpoints.
+// Everything else stays behind httperr's generic message, since it may carry
+// raw Postgres/Qdrant/MinIO detail.
+func isCredentialConfigError(err error) bool {
+	return errors.Is(err, modelconfig.ErrCredentialNotFound) || errors.Is(err, modelconfig.ErrNoDefaultProvider)
 }
 
 // Query godoc
@@ -137,6 +172,10 @@ func (h *Handler) Query(w http.ResponseWriter, r *http.Request) {
 		TopK:        req.TopK,
 	})
 	if err != nil {
+		if isCredentialConfigError(err) {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		httperr.Internal(w, r, "query failed", err, "workspace_id", req.WorkspaceID)
 		return
 	}
@@ -254,6 +293,7 @@ func (h *Handler) QueryStream(w http.ResponseWriter, r *http.Request) {
 			WorkspaceID: req.WorkspaceID,
 			Query:       req.Question,
 			TopK:        req.TopK,
+			LLM:         req.llmSelection(),
 		})
 		answerCh <- answerResult{chunks: chunks, stream: stream, err: err}
 	}()
@@ -277,7 +317,10 @@ waitForAnswer:
 
 	chunks, stream, err := ar.chunks, ar.stream, ar.err
 	if err != nil {
-		msg := httperr.Message(r, "answer failed", err, "workspace_id", req.WorkspaceID)
+		msg := err.Error()
+		if !isCredentialConfigError(err) {
+			msg = httperr.Message(r, "answer failed", err, "workspace_id", req.WorkspaceID)
+		}
 		writeSSEEvent(w, "error", map[string]string{"error": msg})
 		flusher.Flush()
 		return

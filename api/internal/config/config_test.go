@@ -61,7 +61,14 @@ func setValidEnv(t *testing.T) {
 
 	t.Setenv("RERANKER_URL", "http://localhost:8082")
 	t.Setenv("RERANKER_MODEL", "BAAI/bge-reranker-base")
+
+	t.Setenv("SECRETS_ENCRYPTION_KEY", testEncryptionKey)
 }
+
+// testEncryptionKey is a valid base64-encoded 32-byte AES key. The validator
+// enforces the encoded length (44 characters), so a shorter placeholder would
+// fail config validation rather than the test it appears in.
+const testEncryptionKey = "ZGV2LW9ubHkta2V5LWRvLW5vdC11c2UtaW4tcHJvZCE="
 
 // Ensures the validator is initialized once.
 func TestGetValidator_Singleton(t *testing.T) {
@@ -462,7 +469,12 @@ func TestLoadConfig_MissingRequiredStringFields(t *testing.T) {
 		{name: "qdrant url", envVar: "QDRANT_URL", fieldName: "Qdrant.URL"},
 		{name: "qdrant api key", envVar: "QDRANT_API_KEY", fieldName: "Qdrant.APIKey"},
 		{name: "qdrant collection name", envVar: "QDRANT_COLLECTION_NAME", fieldName: "Qdrant.CollectionName"},
-		{name: "ollama url", envVar: "OLLAMA_URL", fieldName: "Ollama.URL"},
+		// OLLAMA_URL itself is intentionally absent from this table: it is now
+		// the on/off switch for the server's default Ollama (see
+		// TestLoadConfig_OllamaDisabledWhenURLEmpty), not an unconditionally
+		// required field. The other two Ollama fields stay required, but only
+		// because setValidEnv sets OLLAMA_URL, which makes them
+		// required_with=URL.
 		{name: "ollama embedding model", envVar: "OLLAMA_EMBEDDING_MODEL", fieldName: "Ollama.EmbeddingModel"},
 		{name: "ollama completion model", envVar: "OLLAMA_COMPLETION_MODEL", fieldName: "Ollama.CompletionModel"},
 		{name: "minio endpoint", envVar: "MINIO_ENDPOINT", fieldName: "MinIO.Endpoint"},
@@ -476,6 +488,7 @@ func TestLoadConfig_MissingRequiredStringFields(t *testing.T) {
 		{name: "auth session secret", envVar: "AUTH_SESSION_SECRET", fieldName: "Auth.SessionSecret"},
 		{name: "reranker url", envVar: "RERANKER_URL", fieldName: "Reranker.URL"},
 		{name: "reranker model", envVar: "RERANKER_MODEL", fieldName: "Reranker.Model"},
+		{name: "secrets encryption key", envVar: "SECRETS_ENCRYPTION_KEY", fieldName: "Secrets.EncryptionKey"},
 	}
 
 	for _, tc := range required {
@@ -501,6 +514,58 @@ func TestLoadConfig_MissingRequiredStringFields(t *testing.T) {
 				t.Fatalf("expected validation error for %s, got: %v", tc.fieldName, err)
 			}
 		})
+	}
+}
+
+// An empty OLLAMA_URL must not fail validation: it is the deliberate switch for
+// a fully BYOK deployment with no server-default provider, not a missing value.
+func TestLoadConfig_OllamaDisabledWhenURLEmpty(t *testing.T) {
+	resetGlobals()
+
+	configDir := t.TempDir()
+	t.Setenv("CONFIG_DIR", configDir)
+	setValidEnv(t)
+
+	for _, key := range []string{"OLLAMA_PORT", "OLLAMA_URL", "OLLAMA_EMBEDDING_MODEL", "OLLAMA_COMPLETION_MODEL"} {
+		if err := os.Unsetenv(key); err != nil {
+			t.Fatalf("failed to unset %s: %v", key, err)
+		}
+	}
+
+	cfg, err := loadConfig()
+	if err != nil {
+		t.Fatalf("loadConfig with no Ollama configured: %v", err)
+	}
+	if cfg.Ollama.Enabled() {
+		t.Error("Ollama.Enabled() = true, want false with OLLAMA_URL unset")
+	}
+}
+
+// Setting OLLAMA_URL without the other three fields must still fail: a
+// half-configured Ollama would only be discovered as broken on first use.
+func TestLoadConfig_OllamaURLRequiresRestOfConfig(t *testing.T) {
+	resetGlobals()
+
+	configDir := t.TempDir()
+	t.Setenv("CONFIG_DIR", configDir)
+	setValidEnv(t)
+
+	if err := os.Unsetenv("OLLAMA_COMPLETION_MODEL"); err != nil {
+		t.Fatalf("failed to unset OLLAMA_COMPLETION_MODEL: %v", err)
+	}
+
+	_, err := loadConfig()
+	if err == nil || !strings.Contains(err.Error(), "Ollama.CompletionModel") {
+		t.Fatalf("loadConfig() = %v, want a validation error for Ollama.CompletionModel", err)
+	}
+}
+
+func TestOllamaEnabled(t *testing.T) {
+	if (Ollama{URL: "http://localhost:11434"}).Enabled() != true {
+		t.Error("Enabled() = false, want true when URL is set")
+	}
+	if (Ollama{}).Enabled() != false {
+		t.Error("Enabled() = true, want false when URL is empty")
 	}
 }
 
@@ -567,6 +632,7 @@ func TestLoadConfig_DotEnvLoading(t *testing.T) {
 		"AUTH_SESSION_SECRET",
 		"RERANKER_URL",
 		"RERANKER_MODEL",
+		"SECRETS_ENCRYPTION_KEY",
 	} {
 		if err := os.Unsetenv(key); err != nil {
 			t.Fatalf("failed to unset %s: %v", key, err)
@@ -602,6 +668,7 @@ func TestLoadConfig_DotEnvLoading(t *testing.T) {
 		"AUTH_SESSION_SECRET=test-session-secret-at-least-32-bytes",
 		"RERANKER_URL=http://localhost:8082",
 		"RERANKER_MODEL=BAAI/bge-reranker-base",
+		"SECRETS_ENCRYPTION_KEY=" + testEncryptionKey,
 	}, "\n") + "\n"
 
 	envDev := "POSTGRES_PASSWORD=devpass\n"

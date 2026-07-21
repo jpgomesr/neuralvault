@@ -312,6 +312,78 @@ func (f *fakeStore) Delete(_ context.Context, key string) error {
 
 func (f *fakeStore) HealthCheck(_ context.Context) error { return nil }
 
+// stubResolver satisfies both embedding.Resolver and llm.Resolver from fixed
+// fakes, so these tests exercise the ingest pipeline rather than the BYOK model
+// resolution that modelconfig owns and tests separately.
+//
+// resolveEmbedderErr/resolveLLMErr let a test simulate a workspace with a
+// misconfigured provider (e.g. no credential saved) — the failure path
+// indexInBackground/reingestInBackground/Delete must all handle without ever
+// reaching the pipeline or touching Qdrant.
+type stubResolver struct {
+	embedder   embedding.Embedder
+	collection string
+	embModel   string
+	provider   llm.Provider
+	llmModel   string
+
+	resolveEmbedderErr error
+	resolveLLMErr      error
+}
+
+func (r stubResolver) ResolveEmbedder(context.Context, uuid.UUID) (embedding.Embedder, embedding.Target, error) {
+	if r.resolveEmbedderErr != nil {
+		return nil, embedding.Target{}, r.resolveEmbedderErr
+	}
+	return r.embedder, embedding.Target{
+		Model:      r.embModel,
+		Collection: r.collection,
+		Dimensions: 768,
+	}, nil
+}
+
+func (r stubResolver) ResolveLLM(context.Context, uuid.UUID, *llm.Selection) (llm.Provider, string, error) {
+	if r.resolveLLMErr != nil {
+		return nil, "", r.resolveLLMErr
+	}
+	return r.provider, r.llmModel, nil
+}
+
+// newTestSourceService constructs a SourceService from concrete fakes, wrapping
+// them in a stubResolver.
+func newTestSourceService(
+	pool storage.Pool,
+	store objectstorage.Client,
+	reader sourcereader.Reader,
+	chunker *chunking.ChunkService,
+	bus *ProgressBus,
+	emb embedding.Embedder,
+	vs vectorstorage.Client,
+	prov llm.Provider,
+	collection string,
+	embeddingModel string,
+	completionModel string,
+) *SourceService {
+	res := stubResolver{
+		embedder:   emb,
+		collection: collection,
+		embModel:   embeddingModel,
+		provider:   prov,
+		llmModel:   completionModel,
+	}
+	return NewSourceService(pool, store, reader, chunker, bus, res, vs, res)
+}
+
+// runPipelineWithDefaults drives the pipeline the way the background indexing
+// goroutines do: resolve the workspace's models first, then run.
+func (s *SourceService) runPipelineWithDefaults(ctx context.Context, source model.Source, rootPath string) (int, error) {
+	models, err := s.resolveModels(ctx, source.WorkspaceID)
+	if err != nil {
+		return 0, err
+	}
+	return s.runPipeline(ctx, source, rootPath, models)
+}
+
 // buildSvcWithStore builds a SourceService with a custom pool and object store,
 // a real chunker on sharedPool, and no-op embedder/vector store.
 func buildSvcWithStore(_ context.Context, t *testing.T, pool storage.Pool, store objectstorage.Client) *SourceService {
@@ -320,7 +392,7 @@ func buildSvcWithStore(_ context.Context, t *testing.T, pool storage.Pool, store
 		chunking.ContentTypeMarkdown:  markdown.New(),
 		chunking.ContentTypePlaintext: text.New(),
 	}
-	return NewSourceService(
+	return newTestSourceService(
 		pool,
 		store,
 		sourcereader.NewFileReader(),
@@ -474,7 +546,7 @@ func newSvcVS(ctx context.Context, t *testing.T, vs vectorstorage.Client) *Sourc
 		chunking.ContentTypeMarkdown:  markdown.New(),
 		chunking.ContentTypePlaintext: text.New(),
 	}
-	return NewSourceService(
+	return newTestSourceService(
 		sharedPool,
 		store,
 		sourcereader.NewFileReader(),
@@ -486,6 +558,31 @@ func newSvcVS(ctx context.Context, t *testing.T, vs vectorstorage.Client) *Sourc
 		"test",
 		"nomic-embed-text",
 		"test-completion-model",
+	)
+}
+
+// newSvcWithResolver builds a SourceService backed by res instead of the
+// default always-succeeding stubResolver, so a test can simulate a workspace
+// whose provider credential is missing or invalid.
+func newSvcWithResolver(ctx context.Context, t *testing.T, res stubResolver) *SourceService {
+	t.Helper()
+	store, err := minioclient.New(ctx, sharedMinioCfg)
+	if err != nil {
+		t.Fatalf("minio client: %v", err)
+	}
+	splitters := map[chunking.ContentType]chunking.Splitter{
+		chunking.ContentTypeMarkdown:  markdown.New(),
+		chunking.ContentTypePlaintext: text.New(),
+	}
+	return NewSourceService(
+		sharedPool,
+		store,
+		sourcereader.NewFileReader(),
+		chunking.NewChunkService(sharedPool, splitters),
+		NewProgressBus(),
+		res,
+		stubVectorStore{},
+		res,
 	)
 }
 
@@ -1121,7 +1218,7 @@ func buildCustomSvcWithProvider(_ context.Context, t *testing.T, pool storage.Po
 		chunking.ContentTypeMarkdown:  markdown.New(),
 		chunking.ContentTypePlaintext: text.New(),
 	}
-	return NewSourceService(
+	return newTestSourceService(
 		pool,
 		nil, // objectstorage.Client — not used by runPipeline
 		sourcereader.NewFileReader(),
@@ -1189,7 +1286,7 @@ func makeTempDirWithFile(t *testing.T, name, content string) string {
 
 func TestUpsertChunkVectors_CountMismatch(t *testing.T) {
 	ctx := context.Background()
-	svc := &SourceService{vectorStore: stubVectorStore{}, collectionName: "test"}
+	svc := &SourceService{vectorStore: stubVectorStore{}}
 
 	chunks := []model.Chunk{
 		{ID: uuid.New(), WorkspaceID: uuid.New(), SourceID: uuid.New()},
@@ -1199,7 +1296,7 @@ func TestUpsertChunkVectors_CountMismatch(t *testing.T) {
 		{ChunkID: chunks[0].ID.String(), Vector: []float32{0.1}},
 	}
 
-	err := svc.upsertChunkVectors(ctx, chunks, embeddings)
+	err := svc.upsertChunkVectors(ctx, chunks, embeddings, "test")
 	if err == nil || !strings.Contains(err.Error(), "embedding count mismatch") {
 		t.Fatalf("expected embedding count mismatch error, got: %v", err)
 	}
@@ -1207,7 +1304,7 @@ func TestUpsertChunkVectors_CountMismatch(t *testing.T) {
 
 func TestUpsertChunkVectors_EmptyVector(t *testing.T) {
 	ctx := context.Background()
-	svc := &SourceService{vectorStore: stubVectorStore{}, collectionName: "test"}
+	svc := &SourceService{vectorStore: stubVectorStore{}}
 
 	id := uuid.New()
 	chunks := []model.Chunk{
@@ -1217,7 +1314,7 @@ func TestUpsertChunkVectors_EmptyVector(t *testing.T) {
 		{ChunkID: id.String(), Vector: nil},
 	}
 
-	err := svc.upsertChunkVectors(ctx, chunks, embeddings)
+	err := svc.upsertChunkVectors(ctx, chunks, embeddings, "test")
 	if err == nil || !strings.Contains(err.Error(), "empty vector") {
 		t.Fatalf("expected empty vector error, got: %v", err)
 	}
@@ -1225,7 +1322,7 @@ func TestUpsertChunkVectors_EmptyVector(t *testing.T) {
 
 func TestUpsertChunkVectors_ZeroUUID(t *testing.T) {
 	ctx := context.Background()
-	svc := &SourceService{vectorStore: stubVectorStore{}, collectionName: "test"}
+	svc := &SourceService{vectorStore: stubVectorStore{}}
 
 	chunks := []model.Chunk{
 		{ID: uuid.Nil, WorkspaceID: uuid.New(), SourceID: uuid.New()},
@@ -1234,7 +1331,7 @@ func TestUpsertChunkVectors_ZeroUUID(t *testing.T) {
 		{ChunkID: uuid.Nil.String(), Vector: []float32{0.1, 0.2}},
 	}
 
-	err := svc.upsertChunkVectors(ctx, chunks, embeddings)
+	err := svc.upsertChunkVectors(ctx, chunks, embeddings, "test")
 	if err == nil || !strings.Contains(err.Error(), "zero-value UUID") {
 		t.Fatalf("expected zero-value UUID error, got: %v", err)
 	}
@@ -1242,7 +1339,7 @@ func TestUpsertChunkVectors_ZeroUUID(t *testing.T) {
 
 func TestUpsertChunkVectors_UpsertError(t *testing.T) {
 	ctx := context.Background()
-	svc := &SourceService{vectorStore: errorVectorStore{}, collectionName: "test"}
+	svc := &SourceService{vectorStore: errorVectorStore{}}
 
 	id := uuid.New()
 	chunks := []model.Chunk{
@@ -1252,7 +1349,7 @@ func TestUpsertChunkVectors_UpsertError(t *testing.T) {
 		{ChunkID: id.String(), Vector: []float32{0.1, 0.2}},
 	}
 
-	err := svc.upsertChunkVectors(ctx, chunks, embeddings)
+	err := svc.upsertChunkVectors(ctx, chunks, embeddings, "test")
 	if err == nil || !strings.Contains(err.Error(), "qdrant upsert") {
 		t.Fatalf("expected qdrant upsert error, got: %v", err)
 	}
@@ -1404,15 +1501,204 @@ func TestServiceDelete_RowDeleteError(t *testing.T) {
 	}
 }
 
+func TestServiceDelete_ResolveEmbedderError(t *testing.T) {
+	ctx := context.Background()
+	wid := insertWS(ctx, t)
+	svc := newSvcVS(ctx, t, stubVectorStore{})
+
+	src, err := svc.Create(ctx, CreateRequest{WorkspaceID: wid, Name: "x"}, []FileUpload{
+		{Name: "a.md", Content: bytes.NewBufferString("hi"), Size: 2},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	awaitIndexed(ctx, t, svc, src.ID)
+
+	resolveErr := errors.New(`no api key saved for provider "anthropic"`)
+	broken := newSvcWithResolver(ctx, t, stubResolver{resolveEmbedderErr: resolveErr})
+
+	if err := broken.Delete(ctx, src.ID); err == nil {
+		t.Fatal("Delete with a broken resolver = nil error, want error")
+	}
+	// The failure must happen before anything destructive: the source row
+	// (and by extension its files and vectors) must survive.
+	if _, err := svc.GetByID(ctx, src.ID); err != nil {
+		t.Errorf("expected source row to survive a failed resolve, got: %v", err)
+	}
+}
+
+// ── BYOK model resolution failure paths ──────────────────────────────────────
+//
+// These mirror the ingest/re-ingest/delete tests above but with a resolver
+// that fails the way an unconfigured workspace does (e.g. no provider
+// credential saved) — the stubResolver used elsewhere in this file always
+// succeeds, so these are the only tests exercising resolveModels' own error
+// branch and its callers' handling of it.
+
+// TestServiceIndexInBackground_ResolveModelsError verifies a source whose
+// workspace has no usable provider is marked errored — not left stuck
+// "indexing" forever — and that the pipeline never runs.
+func TestServiceIndexInBackground_ResolveModelsError(t *testing.T) {
+	ctx := context.Background()
+	wid := insertWS(ctx, t)
+	resolveErr := errors.New(`no api key saved for provider "anthropic"`)
+	svc := newSvcWithResolver(ctx, t, stubResolver{resolveEmbedderErr: resolveErr})
+
+	const content = "# Hello\nOriginal content."
+	src, err := svc.Create(ctx, CreateRequest{WorkspaceID: wid, Name: "unconfigured"}, []FileUpload{
+		{Name: "file.md", Content: bytes.NewBufferString(content), Size: int64(len(content))},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	awaitError(ctx, t, svc, src.ID)
+
+	chunks, err := svc.ListChunks(ctx, src.ID)
+	if err != nil {
+		t.Fatalf("ListChunks: %v", err)
+	}
+	if len(chunks) != 0 {
+		t.Errorf("expected no chunks to be created, got %d", len(chunks))
+	}
+}
+
+// TestServiceReingest_ResolveModelsError mirrors the above for the re-ingest
+// path: if a workspace's provider breaks after a source was already indexed,
+// resolveModels is called (and must fail) before anything is deleted, so the
+// existing chunks survive rather than being emptied and left unsearchable.
+func TestServiceReingest_ResolveModelsError(t *testing.T) {
+	ctx := context.Background()
+	wid := insertWS(ctx, t)
+	svc := newSvcVS(ctx, t, stubVectorStore{})
+
+	const content = "# Hello\nOriginal content."
+	src, err := svc.Create(ctx, CreateRequest{WorkspaceID: wid, Name: "goes-unconfigured"}, []FileUpload{
+		{Name: "file.md", Content: bytes.NewBufferString(content), Size: int64(len(content))},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	awaitIndexed(ctx, t, svc, src.ID)
+
+	before, err := svc.ListChunks(ctx, src.ID)
+	if err != nil {
+		t.Fatalf("ListChunks: %v", err)
+	}
+	if len(before) == 0 {
+		t.Fatal("expected chunks after initial indexing")
+	}
+
+	resolveErr := errors.New(`no api key saved for provider "anthropic"`)
+	broken := newSvcWithResolver(ctx, t, stubResolver{resolveEmbedderErr: resolveErr})
+	if err := broken.Ingest(ctx, src.ID); err != nil {
+		t.Fatalf("Ingest: %v", err)
+	}
+	awaitError(ctx, t, broken, src.ID)
+
+	after, err := svc.ListChunks(ctx, src.ID)
+	if err != nil {
+		t.Fatalf("ListChunks after failed re-ingest: %v", err)
+	}
+	if len(after) != len(before) {
+		t.Errorf("chunks = %d after failed re-ingest, want unchanged %d (existing chunks must survive a resolve failure)", len(after), len(before))
+	}
+}
+
+// ── ReindexWorkspace ──────────────────────────────────────────────────────────
+
+// TestReindexWorkspace_QueuesAllSources verifies every source in a workspace
+// is re-ingested and the reported count matches — the flow SetEmbedding's
+// caller runs after a workspace switches its embedding model.
+func TestReindexWorkspace_QueuesAllSources(t *testing.T) {
+	ctx := context.Background()
+	wid := insertWS(ctx, t)
+	svc := newSvcVS(ctx, t, stubVectorStore{})
+
+	const content = "# Hello\nOriginal content."
+	var srcs []model.Source
+	for i := 0; i < 2; i++ {
+		src, err := svc.Create(ctx, CreateRequest{WorkspaceID: wid, Name: fmt.Sprintf("source-%d", i)}, []FileUpload{
+			{Name: "file.md", Content: bytes.NewBufferString(content), Size: int64(len(content))},
+		})
+		if err != nil {
+			t.Fatalf("Create: %v", err)
+		}
+		awaitIndexed(ctx, t, svc, src.ID)
+		srcs = append(srcs, *src)
+	}
+
+	queued, err := svc.ReindexWorkspace(ctx, wid)
+	if err != nil {
+		t.Fatalf("ReindexWorkspace: %v", err)
+	}
+	if queued != len(srcs) {
+		t.Errorf("queued = %d, want %d", queued, len(srcs))
+	}
+	for _, src := range srcs {
+		awaitIndexed(ctx, t, svc, src.ID)
+	}
+}
+
+// TestReindexWorkspace_SkipsAlreadyIndexing verifies a source already being
+// indexed (e.g. by a concurrent run) is skipped rather than failing the whole
+// call — matching the doc comment on ReindexWorkspace.
+func TestReindexWorkspace_SkipsAlreadyIndexing(t *testing.T) {
+	ctx := context.Background()
+	wid := insertWS(ctx, t)
+	svc := newSvcVS(ctx, t, stubVectorStore{})
+
+	const content = "# Hello\nOriginal content."
+	src, err := svc.Create(ctx, CreateRequest{WorkspaceID: wid, Name: "busy"}, []FileUpload{
+		{Name: "file.md", Content: bytes.NewBufferString(content), Size: int64(len(content))},
+	})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	awaitIndexed(ctx, t, svc, src.ID)
+
+	// Force the source into "indexing" so claimForIndexing rejects it, the way
+	// a concurrent ingest run would.
+	if _, err := sharedPool.Exec(ctx, "UPDATE sources SET status = $1 WHERE id = $2", model.SourceStatusIndexing, src.ID); err != nil {
+		t.Fatalf("forcing indexing status: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = sharedPool.Exec(context.Background(), "UPDATE sources SET status = $1 WHERE id = $2", model.SourceStatusIndexed, src.ID)
+	})
+
+	queued, err := svc.ReindexWorkspace(ctx, wid)
+	if err != nil {
+		t.Fatalf("ReindexWorkspace: %v", err)
+	}
+	if queued != 0 {
+		t.Errorf("queued = %d, want 0 (the busy source must be skipped, not counted)", queued)
+	}
+}
+
+// TestReindexWorkspace_EmptyWorkspace verifies a workspace with no sources
+// queues nothing and returns no error.
+func TestReindexWorkspace_EmptyWorkspace(t *testing.T) {
+	ctx := context.Background()
+	wid := insertWS(ctx, t)
+	svc := newSvcVS(ctx, t, stubVectorStore{})
+
+	queued, err := svc.ReindexWorkspace(ctx, wid)
+	if err != nil {
+		t.Fatalf("ReindexWorkspace: %v", err)
+	}
+	if queued != 0 {
+		t.Errorf("queued = %d, want 0", queued)
+	}
+}
+
 // ── deleteSourceVectors direct tests ─────────────────────────────────────────
 
 func TestDeleteSourceVectors(t *testing.T) {
 	ctx := context.Background()
 	spy := &spyVectorStore{}
-	svc := &SourceService{vectorStore: spy, collectionName: "test"}
+	svc := &SourceService{vectorStore: spy}
 
 	sourceID := uuid.New()
-	if err := svc.deleteSourceVectors(ctx, sourceID); err != nil {
+	if err := svc.deleteSourceVectors(ctx, sourceID, "test"); err != nil {
 		t.Fatalf("deleteSourceVectors: %v", err)
 	}
 
@@ -1430,9 +1716,9 @@ func TestDeleteSourceVectors(t *testing.T) {
 
 func TestDeleteSourceVectors_DeleteError(t *testing.T) {
 	ctx := context.Background()
-	svc := &SourceService{vectorStore: deleteErrorVectorStore{}, collectionName: "test"}
+	svc := &SourceService{vectorStore: deleteErrorVectorStore{}}
 
-	err := svc.deleteSourceVectors(ctx, uuid.New())
+	err := svc.deleteSourceVectors(ctx, uuid.New(), "test")
 	if err == nil || !strings.Contains(err.Error(), "qdrant delete") {
 		t.Fatalf("expected qdrant delete error, got: %v", err)
 	}
@@ -1442,13 +1728,10 @@ func TestDeleteSourceVectors_DeleteError(t *testing.T) {
 
 func TestUpdateEmbeddingModel_ExecError(t *testing.T) {
 	ctx := context.Background()
-	svc := &SourceService{
-		pool:           selectiveFailingPool{Pool: sharedPool},
-		embeddingModel: "nomic-embed-text",
-	}
+	svc := &SourceService{pool: selectiveFailingPool{Pool: sharedPool}}
 
 	chunks := []model.Chunk{{ID: uuid.New()}}
-	err := svc.updateEmbeddingModel(ctx, chunks)
+	err := svc.updateEmbeddingModel(ctx, chunks, "nomic-embed-text")
 	if err == nil || !strings.Contains(err.Error(), "update embedding_model") {
 		t.Fatalf("expected update embedding_model error, got: %v", err)
 	}
@@ -1467,7 +1750,7 @@ func TestRunPipeline_EmptyFile(t *testing.T) {
 	}
 
 	svc := buildCustomSvc(ctx, t, sharedPool, &stubEmbedder{dim: 768}, stubVectorStore{})
-	total, err := svc.runPipeline(ctx, src, dir)
+	total, err := svc.runPipelineWithDefaults(ctx, src, dir)
 	if err != nil {
 		t.Fatalf("runPipeline with empty file: %v", err)
 	}
@@ -1483,7 +1766,7 @@ func TestRunPipeline_EmbedBatchError(t *testing.T) {
 	src := insertSrcRow(ctx, t, wid)
 
 	svc := buildCustomSvc(ctx, t, sharedPool, failingEmbedder{}, stubVectorStore{})
-	_, err := svc.runPipeline(ctx, src, dir)
+	_, err := svc.runPipelineWithDefaults(ctx, src, dir)
 	if err == nil || !strings.Contains(err.Error(), "embedding chunks from") {
 		t.Fatalf("expected embed batch error, got: %v", err)
 	}
@@ -1496,7 +1779,7 @@ func TestRunPipeline_UpsertError(t *testing.T) {
 	src := insertSrcRow(ctx, t, wid)
 
 	svc := buildCustomSvc(ctx, t, sharedPool, &stubEmbedder{dim: 768}, errorVectorStore{})
-	_, err := svc.runPipeline(ctx, src, dir)
+	_, err := svc.runPipelineWithDefaults(ctx, src, dir)
 	if err == nil || !strings.Contains(err.Error(), "upserting vectors for") {
 		t.Fatalf("expected upsert error, got: %v", err)
 	}
@@ -1512,7 +1795,7 @@ func TestRunPipeline_UpdateEmbeddingModelError(t *testing.T) {
 	// The chunker uses sharedPool directly (captured at construction time)
 	// so chunk INSERTs continue to succeed.
 	svc := buildCustomSvc(ctx, t, selectiveFailingPool{Pool: sharedPool}, &stubEmbedder{dim: 768}, stubVectorStore{})
-	_, err := svc.runPipeline(ctx, src, dir)
+	_, err := svc.runPipelineWithDefaults(ctx, src, dir)
 	if err == nil || !strings.Contains(err.Error(), "updating embedding model for") {
 		t.Fatalf("expected updateEmbeddingModel error, got: %v", err)
 	}
@@ -1528,7 +1811,7 @@ func TestRunPipeline_CaptionsStructuredChunks(t *testing.T) {
 
 	prov := &stubProvider{completion: "This diagram shows the browser connecting to the API, which connects to the database."}
 	svc := buildCustomSvcWithProvider(ctx, t, sharedPool, &stubEmbedder{dim: 768}, stubVectorStore{}, prov)
-	if _, err := svc.runPipeline(ctx, src, dir); err != nil {
+	if _, err := svc.runPipelineWithDefaults(ctx, src, dir); err != nil {
 		t.Fatalf("runPipeline: %v", err)
 	}
 	if prov.calls != 1 {
@@ -1558,7 +1841,7 @@ func TestRunPipeline_SkipsCaptioningForPlainProse(t *testing.T) {
 
 	prov := &stubProvider{completion: "should never be used"}
 	svc := buildCustomSvcWithProvider(ctx, t, sharedPool, &stubEmbedder{dim: 768}, stubVectorStore{}, prov)
-	if _, err := svc.runPipeline(ctx, src, dir); err != nil {
+	if _, err := svc.runPipelineWithDefaults(ctx, src, dir); err != nil {
 		t.Fatalf("runPipeline: %v", err)
 	}
 	if prov.calls != 0 {
@@ -1574,7 +1857,7 @@ func TestRunPipeline_CaptioningFailureDoesNotFailIngest(t *testing.T) {
 
 	prov := &stubProvider{err: errors.New("llm unavailable")}
 	svc := buildCustomSvcWithProvider(ctx, t, sharedPool, &stubEmbedder{dim: 768}, stubVectorStore{}, prov)
-	total, err := svc.runPipeline(ctx, src, dir)
+	total, err := svc.runPipelineWithDefaults(ctx, src, dir)
 	if err != nil {
 		t.Fatalf("expected runPipeline to succeed despite captioning failure, got: %v", err)
 	}
@@ -1602,7 +1885,7 @@ func TestRunPipeline_CaptionSkippedWhenEmpty(t *testing.T) {
 
 	prov := &stubProvider{completion: "   \n  "} // trims to empty
 	svc := buildCustomSvcWithProvider(ctx, t, sharedPool, &stubEmbedder{dim: 768}, stubVectorStore{}, prov)
-	if _, err := svc.runPipeline(ctx, src, dir); err != nil {
+	if _, err := svc.runPipelineWithDefaults(ctx, src, dir); err != nil {
 		t.Fatalf("runPipeline: %v", err)
 	}
 	if prov.calls != 1 {
@@ -1630,7 +1913,7 @@ func TestRunPipeline_CaptionPersistFailureDoesNotFailIngest(t *testing.T) {
 
 	prov := &stubProvider{completion: "A diagram of the browser calling the API."}
 	svc := buildCustomSvcWithProvider(ctx, t, contentUpdateFailingPool{Pool: sharedPool}, &stubEmbedder{dim: 768}, stubVectorStore{}, prov)
-	total, err := svc.runPipeline(ctx, src, dir)
+	total, err := svc.runPipelineWithDefaults(ctx, src, dir)
 	if err != nil {
 		t.Fatalf("expected runPipeline to succeed despite caption-persist failure, got: %v", err)
 	}

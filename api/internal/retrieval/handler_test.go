@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	"github.com/jpgomesr/NeuralVault/internal/conversations"
 	"github.com/jpgomesr/NeuralVault/internal/llm"
 	"github.com/jpgomesr/NeuralVault/internal/model"
+	"github.com/jpgomesr/NeuralVault/internal/modelconfig"
 )
 
 // fakeRetriever is a minimal test double for Retriever.
@@ -388,6 +390,120 @@ func TestQuery_ConversationLoadError(t *testing.T) {
 
 	if w.Code != http.StatusInternalServerError {
 		t.Fatalf("expected 500, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// TestQuery_CredentialConfigError verifies that a missing-credential or
+// no-default-provider error from the resolver (surfaced through
+// ResolveEmbedder during Retrieve) reaches the client as a clear, actionable
+// 400 instead of being collapsed into httperr's generic 500 — the gap the
+// issue's "fail gracefully on a missing/invalid key" requirement calls out.
+func TestQuery_CredentialConfigError(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+	}{
+		{
+			name: "no credential saved",
+			err:  fmt.Errorf("resolving embedder: %w: no api key saved for provider %q", modelconfig.ErrCredentialNotFound, "anthropic"),
+		},
+		{
+			name: "no default provider",
+			err:  fmt.Errorf("resolving embedder: %w: this server has no default Ollama provider configured", modelconfig.ErrNoDefaultProvider),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := NewHandler(&fakeRetriever{err: tt.err}, allowMembers(), noConversations())
+
+			body := `{"workspace_id":"` + uuid.New().String() + `","question":"hi"}`
+			w := httptest.NewRecorder()
+			h.Query(w, postQuery(body))
+
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+			}
+			if !strings.Contains(w.Body.String(), tt.err.Error()) {
+				t.Fatalf("body = %q, want it to contain the actionable message %q", w.Body.String(), tt.err.Error())
+			}
+		})
+	}
+}
+
+// TestQuery_ServiceError_DoesNotLeakDetail complements TestQuery_ServiceError:
+// a genuine internal failure must still go through httperr's generic message,
+// not the raw error text, unlike the credential-config case above.
+func TestQuery_ServiceError_DoesNotLeakDetail(t *testing.T) {
+	dbErr := errTest("pgx: connection refused")
+	h := NewHandler(&fakeRetriever{err: dbErr}, allowMembers(), noConversations())
+
+	body := `{"workspace_id":"` + uuid.New().String() + `","question":"hi"}`
+	w := httptest.NewRecorder()
+	h.Query(w, postQuery(body))
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d: %s", w.Code, w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), string(dbErr)) {
+		t.Fatalf("body leaked internal error detail: %q", w.Body.String())
+	}
+}
+
+// sseErrorMessage extracts the "error" field from the SSE stream's terminal
+// "error" event. writeSSEEvent JSON-encodes the payload, so a raw substring
+// match against body would miss messages containing characters JSON escapes
+// (e.g. the quotes around a provider name) — decode instead of grepping.
+func sseErrorMessage(t *testing.T, body string) string {
+	t.Helper()
+	const marker = "event: error\ndata: "
+	i := strings.Index(body, marker)
+	if i == -1 {
+		t.Fatalf("no SSE error event found in %q", body)
+	}
+	line := body[i+len(marker):]
+	line = line[:strings.IndexByte(line, '\n')]
+
+	var payload struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(line), &payload); err != nil {
+		t.Fatalf("decoding SSE error payload %q: %v", line, err)
+	}
+	return payload.Error
+}
+
+// TestQueryStream_CredentialConfigError mirrors TestQuery_CredentialConfigError
+// for the SSE path: the "error" event must carry the actionable message
+// produced by ResolveLLM, not httperr's generic "internal server error".
+func TestQueryStream_CredentialConfigError(t *testing.T) {
+	answerErr := fmt.Errorf("resolving llm provider: %w: no api key saved for provider %q", modelconfig.ErrCredentialNotFound, "anthropic")
+	h := NewHandler(&fakeRetriever{answerErr: answerErr}, allowMembers(), noConversations())
+
+	body := `{"workspace_id":"` + uuid.New().String() + `","question":"hi"}`
+	w := httptest.NewRecorder()
+	h.QueryStream(w, postQuery(body))
+
+	if got, want := sseErrorMessage(t, w.Body.String()), answerErr.Error(); got != want {
+		t.Fatalf("SSE error message = %q, want %q", got, want)
+	}
+}
+
+// TestQueryStream_ServiceError_DoesNotLeakDetail mirrors
+// TestQuery_ServiceError_DoesNotLeakDetail for the SSE path.
+func TestQueryStream_ServiceError_DoesNotLeakDetail(t *testing.T) {
+	upstreamErr := errTest("qdrant: connection refused")
+	h := NewHandler(&fakeRetriever{answerErr: upstreamErr}, allowMembers(), noConversations())
+
+	body := `{"workspace_id":"` + uuid.New().String() + `","question":"hi"}`
+	w := httptest.NewRecorder()
+	h.QueryStream(w, postQuery(body))
+
+	msg := sseErrorMessage(t, w.Body.String())
+	if strings.Contains(msg, string(upstreamErr)) {
+		t.Fatalf("SSE error message leaked internal error detail: %q", msg)
+	}
+	if !strings.Contains(msg, "internal server error") {
+		t.Fatalf("SSE error message = %q, want the generic internal error message", msg)
 	}
 }
 

@@ -12,9 +12,11 @@ import (
 
 	"github.com/jpgomesr/NeuralVault/internal/auth"
 	"github.com/jpgomesr/NeuralVault/internal/config"
+	"github.com/jpgomesr/NeuralVault/internal/crypto"
 	"github.com/jpgomesr/NeuralVault/internal/embedding"
 	"github.com/jpgomesr/NeuralVault/internal/llm"
 	"github.com/jpgomesr/NeuralVault/internal/logger"
+	"github.com/jpgomesr/NeuralVault/internal/modelconfig"
 	"github.com/jpgomesr/NeuralVault/internal/objectstorage"
 	"github.com/jpgomesr/NeuralVault/internal/reranking"
 	"github.com/jpgomesr/NeuralVault/internal/router"
@@ -72,17 +74,40 @@ func main() {
 		os.Exit(1)
 	}
 
-	embedder, err := embedding.NewEmbedder(ctx, cfg)
+	// embedder and the LLM provider fail-fast check only run when the server has
+	// a default Ollama configured (OLLAMA_URL set). A deployment that runs
+	// entirely on BYOK — every workspace bringing its own key — has no local
+	// model to check and no reason to require one; modelConfig resolves
+	// providers per workspace regardless. embedder stays nil in that case, and
+	// router skips the "ollama" health check for it.
+	var embedder embedding.Embedder
+	if cfg.Ollama.Enabled() {
+		embedder, err = embedding.NewEmbedder(ctx, cfg)
+		if err != nil {
+			slog.Error("failed to initialise embedder", "err", err)
+			os.Exit(1)
+		}
+
+		// The server default LLM provider is constructed here purely to fail
+		// fast: a workspace with no BYOK credential falls back to it, so a
+		// misconfigured Ollama must kill the process at boot rather than surface
+		// on the first query. The instance itself is not passed on — modelConfig
+		// resolves providers per workspace.
+		if _, err := llm.NewProvider(ctx, cfg); err != nil {
+			slog.Error("failed to initialise llm provider", "err", err)
+			os.Exit(1)
+		}
+	} else {
+		slog.Info("no server-default Ollama configured (OLLAMA_URL empty); every workspace must configure its own provider")
+	}
+
+	cipher, err := crypto.New(cfg.Secrets.EncryptionKey)
 	if err != nil {
-		slog.Error("failed to initialise embedder", "err", err)
+		slog.Error("failed to initialise secrets cipher", "err", err)
 		os.Exit(1)
 	}
 
-	llmProvider, err := llm.NewProvider(ctx, cfg)
-	if err != nil {
-		slog.Error("failed to initialise llm provider", "err", err)
-		os.Exit(1)
-	}
+	modelConfig := modelconfig.NewModelConfigService(pgPool, cipher, qdrantClient, cfg)
 
 	reranker, err := reranking.NewReranker(ctx, cfg)
 	if err != nil {
@@ -96,7 +121,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	r := router.NewRouter(cfg, pgPool, minioClient, embedder, qdrantClient, llmProvider, reranker, authService)
+	r := router.NewRouter(cfg, pgPool, minioClient, embedder, qdrantClient, modelConfig, reranker, authService)
 
 	// ctx is cancelled on SIGINT/SIGTERM to trigger graceful shutdown.
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

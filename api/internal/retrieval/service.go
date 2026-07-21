@@ -57,6 +57,14 @@ type RetrieveRequest struct {
 	// TopK is the number of results to return. Values <= 0 fall back to
 	// defaultTopK; values above maxTopK are capped.
 	TopK int
+	// LLM overrides the workspace's default completion model for this request
+	// alone — the model picker in the chat composer. Nil means use the
+	// workspace's saved default. It affects Answer only; Retrieve ignores it.
+	//
+	// There is deliberately no embedding equivalent: the embedder is bound to
+	// the workspace's Qdrant collection, so swapping it per request would search
+	// a collection built by a different model.
+	LLM *llm.Selection
 }
 
 // RetrievedChunk pairs a chunk with its relevance score: the cross-encoder
@@ -79,26 +87,26 @@ type Retriever interface {
 
 // RetrievalService is the concrete implementation of Retriever.
 type RetrievalService struct {
-	pool            storage.Pool
-	embedder        embedding.Embedder
-	vectorStore     vectorstorage.Client
-	provider        llm.Provider
-	reranker        reranking.Reranker
-	collectionName  string
-	completionModel string
+	pool        storage.Pool
+	vectorStore vectorstorage.Client
+	reranker    reranking.Reranker
+
+	// The embedder and the LLM provider are resolved per request rather than
+	// injected once, because each workspace can bring its own provider and key
+	// (BYOK) and pick its own model.
+	embedders embedding.Resolver
+	providers llm.Resolver
 }
 
-// NewRetrievalService constructs a RetrievalService. provider and
-// completionModel back the streaming Answer flow; Retrieve does not use them.
-func NewRetrievalService(pool storage.Pool, embedder embedding.Embedder, vectorStore vectorstorage.Client, provider llm.Provider, reranker reranking.Reranker, collectionName, completionModel string) *RetrievalService {
+// NewRetrievalService constructs a RetrievalService. providers backs the
+// streaming Answer flow; Retrieve does not use it.
+func NewRetrievalService(pool storage.Pool, embedders embedding.Resolver, vectorStore vectorstorage.Client, providers llm.Resolver, reranker reranking.Reranker) *RetrievalService {
 	return &RetrievalService{
-		pool:            pool,
-		embedder:        embedder,
-		vectorStore:     vectorStore,
-		provider:        provider,
-		reranker:        reranker,
-		collectionName:  collectionName,
-		completionModel: completionModel,
+		pool:        pool,
+		vectorStore: vectorStore,
+		reranker:    reranker,
+		embedders:   embedders,
+		providers:   providers,
 	}
 }
 
@@ -123,14 +131,22 @@ func (s *RetrievalService) Retrieve(ctx context.Context, req RetrieveRequest) ([
 	}
 	pool := candidatePoolSize(topK)
 
-	vector, err := s.embedder.Embed(ctx, req.Query)
+	// The embedder and the collection are resolved together and must stay
+	// together: the query vector is only comparable to vectors in the collection
+	// the same model produced.
+	embedder, target, err := s.embedders.ResolveEmbedder(ctx, req.WorkspaceID)
+	if err != nil {
+		return nil, fmt.Errorf("resolving embedder: %w", err)
+	}
+
+	vector, err := embedder.Embed(ctx, req.Query)
 	if err != nil {
 		return nil, fmt.Errorf("embedding query: %w", err)
 	}
 
 	start := time.Now()
 	scoredPoints, err := s.vectorStore.Query(ctx, &qdrantpb.QueryPoints{
-		CollectionName: s.collectionName,
+		CollectionName: target.Collection,
 		Query:          qdrantpb.NewQuery(vector...),
 		Filter: &qdrantpb.Filter{
 			Must: []*qdrantpb.Condition{qdrantpb.NewMatch("workspace_id", req.WorkspaceID.String())},
@@ -293,9 +309,14 @@ func (s *RetrievalService) Answer(ctx context.Context, req RetrieveRequest) ([]R
 		return nil, nil, fmt.Errorf("retrieving context: %w", err)
 	}
 
-	stream, err := s.provider.Stream(ctx, llm.CompletionRequest{
+	provider, completionModel, err := s.providers.ResolveLLM(ctx, req.WorkspaceID, req.LLM)
+	if err != nil {
+		return chunks, nil, fmt.Errorf("resolving llm provider: %w", err)
+	}
+
+	stream, err := provider.Stream(ctx, llm.CompletionRequest{
 		Messages: buildMessages(req.Query, chunks),
-		Model:    s.completionModel,
+		Model:    completionModel,
 	})
 	if err != nil {
 		return chunks, nil, fmt.Errorf("starting completion stream: %w", err)

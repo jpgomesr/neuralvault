@@ -3,11 +3,12 @@
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { streamQuery } from "@/lib/api/query";
+import { streamQuery, type ModelOverride } from "@/lib/api/query";
 import { useConversations } from "@/lib/conversation-context";
 import { useSources } from "@/hooks/use-sources";
 import type { ChatMessage, SourceChunk } from "@/lib/types";
 import Markdown from "@/components/Markdown";
+import ModelPicker from "@/components/ModelPicker";
 import SourceFilesDialog from "@/components/SourceFilesDialog";
 
 // Stable fallback reference so the "no conversation found" case doesn't
@@ -26,6 +27,10 @@ export default function Chat({ workspaceId }: { workspaceId: string }) {
   const { data: sources = [] } = useSources(workspaceId);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  // A per-request model override. Null means the workspace's saved default,
+  // which is the only thing that persists — picking a model here does not
+  // change the workspace setting.
+  const [model, setModel] = useState<ModelOverride | null>(null);
   const [preview, setPreview] = useState<{ sourceId: string; sourceName: string; file?: string } | null>(
     null,
   );
@@ -105,6 +110,8 @@ export default function Chat({ workspaceId }: { workspaceId: string }) {
           })),
       },
       conversationId,
+      undefined,
+      model ?? undefined,
     );
 
     setBusy(false);
@@ -148,6 +155,12 @@ export default function Chat({ workspaceId }: { workspaceId: string }) {
       </div>
 
       <form className="composer" onSubmit={onSubmit}>
+        <ModelPicker
+          workspaceId={workspaceId}
+          value={model}
+          onChange={setModel}
+          disabled={busy}
+        />
         <Input
           type="text"
           placeholder="Ask a question…"
