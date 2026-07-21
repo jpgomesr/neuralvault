@@ -16,6 +16,7 @@ import (
 	"github.com/jpgomesr/NeuralVault/internal/llm"
 	"github.com/jpgomesr/NeuralVault/internal/logger"
 	"github.com/jpgomesr/NeuralVault/internal/model"
+	"github.com/jpgomesr/NeuralVault/internal/modelconfig"
 	"github.com/jpgomesr/NeuralVault/internal/workspaces"
 )
 
@@ -110,6 +111,18 @@ func (h *Handler) ensureConversationInWorkspace(w http.ResponseWriter, r *http.R
 	return true
 }
 
+// isCredentialConfigError reports whether err is a workspace configuration
+// gap — no provider configured, or no API key saved for the selected one —
+// rather than a genuine internal failure. modelconfig.ErrCredentialNotFound
+// and ErrNoDefaultProvider surface from the embedder/LLM resolvers on every
+// query and carry a message that's safe to return to the client, same as
+// modelconfig's own writeServiceError treats them for the settings endpoints.
+// Everything else stays behind httperr's generic message, since it may carry
+// raw Postgres/Qdrant/MinIO detail.
+func isCredentialConfigError(err error) bool {
+	return errors.Is(err, modelconfig.ErrCredentialNotFound) || errors.Is(err, modelconfig.ErrNoDefaultProvider)
+}
+
 // Query godoc
 //
 // Embeds the question, runs a workspace-scoped semantic search, and returns
@@ -159,6 +172,10 @@ func (h *Handler) Query(w http.ResponseWriter, r *http.Request) {
 		TopK:        req.TopK,
 	})
 	if err != nil {
+		if isCredentialConfigError(err) {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 		httperr.Internal(w, r, "query failed", err, "workspace_id", req.WorkspaceID)
 		return
 	}
@@ -300,7 +317,10 @@ waitForAnswer:
 
 	chunks, stream, err := ar.chunks, ar.stream, ar.err
 	if err != nil {
-		msg := httperr.Message(r, "answer failed", err, "workspace_id", req.WorkspaceID)
+		msg := err.Error()
+		if !isCredentialConfigError(err) {
+			msg = httperr.Message(r, "answer failed", err, "workspace_id", req.WorkspaceID)
+		}
 		writeSSEEvent(w, "error", map[string]string{"error": msg})
 		flusher.Flush()
 		return
