@@ -68,7 +68,7 @@ func NewRouter(cfg *config.Config, pool storage.Pool, store objectstorage.Client
 	workspaceService := workspaces.NewWorkspaceService(pool)
 	workspaceHandler := workspaces.NewHandler(workspaceService)
 
-	sourceService := sources.NewSourceService(pool, store, sourcereader.NewFileReader(), chunkService, bus, modelConfig, vectorStore, modelConfig)
+	sourceService := sources.NewSourceService(pool, store, sourcereader.NewFileReader(), chunkService, bus, modelConfig, vectorStore, modelConfig, cfg.Indexing.MaxConcurrent)
 	sourceHandler := sources.NewHandler(sourceService, bus, workspaceService, cfg.Server.MaxUploadBytes)
 
 	conversationService := conversations.NewConversationService(pool)

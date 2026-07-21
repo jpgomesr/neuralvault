@@ -88,9 +88,18 @@ type SourceService struct {
 	// (BYOK) and pick its own model.
 	embedders embedding.Resolver
 	providers llm.Resolver
+
+	// indexSem bounds how many indexInBackground/reingestInBackground pipelines
+	// run concurrently, so a burst of uploads can't flood Postgres/disk with
+	// unbounded concurrent transactions. Goroutines that can't acquire a slot
+	// wait rather than fail — see runIndexJob. maxConcurrent must be >= 1: the
+	// caller (config validation) is responsible for that, since a zero-capacity
+	// channel can never be acquired and would deadlock every indexing goroutine.
+	indexSem chan struct{}
 }
 
-// NewSourceService constructs a SourceService.
+// NewSourceService constructs a SourceService. maxConcurrent sizes the
+// semaphore that caps concurrent indexing pipelines; it must be >= 1.
 func NewSourceService(
 	pool storage.Pool,
 	store objectstorage.Client,
@@ -100,6 +109,7 @@ func NewSourceService(
 	embedders embedding.Resolver,
 	vectorStore vectorstorage.Client,
 	providers llm.Resolver,
+	maxConcurrent int,
 ) *SourceService {
 	return &SourceService{
 		pool:        pool,
@@ -110,6 +120,7 @@ func NewSourceService(
 		vectorStore: vectorStore,
 		embedders:   embedders,
 		providers:   providers,
+		indexSem:    make(chan struct{}, maxConcurrent),
 	}
 }
 
@@ -197,7 +208,7 @@ func (s *SourceService) Create(ctx context.Context, req CreateRequest, files []F
 
 	slog.InfoContext(ctx, "source created", "source_id", source.ID, "workspace_id", source.WorkspaceID)
 
-	go s.indexInBackground(source, tempDir)
+	go s.runIndexJob(func() { s.indexInBackground(source, tempDir) })
 
 	return &source, nil
 }
@@ -220,7 +231,7 @@ func (s *SourceService) Ingest(ctx context.Context, sourceID uuid.UUID) error {
 
 	slog.InfoContext(ctx, "ingest requested", "source_id", source.ID, "workspace_id", source.WorkspaceID)
 
-	go s.reingestInBackground(*source)
+	go s.runIndexJob(func() { s.reingestInBackground(*source) })
 
 	return nil
 }
@@ -389,6 +400,18 @@ func (s *SourceService) OpenFile(ctx context.Context, sourceID uuid.UUID, relPat
 		return nil, "", fmt.Errorf("downloading %q: %w", rel, err)
 	}
 	return rc, contentType, nil
+}
+
+// runIndexJob acquires a semaphore slot, runs fn, then releases the slot. It
+// must be called from inside the background goroutine (never around the `go`
+// statement), so a caller waiting for a slot blocks the background goroutine,
+// not the HTTP handler that already returned. The acquire happens before fn's
+// own timeout context is created (inside indexInBackground/reingestInBackground),
+// so time spent queued for a slot doesn't eat into that 10-minute budget.
+func (s *SourceService) runIndexJob(fn func()) {
+	s.indexSem <- struct{}{}
+	defer func() { <-s.indexSem }()
+	fn()
 }
 
 // indexInBackground runs the read→chunk pipeline for a newly created source.
