@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -371,7 +372,9 @@ func newTestSourceService(
 		provider:   prov,
 		llmModel:   completionModel,
 	}
-	return NewSourceService(pool, store, reader, chunker, bus, res, vs, res)
+	// A generous concurrency cap: these tests exercise pipeline behavior, not
+	// the semaphore itself (see TestRunIndexJob_RespectsMaxConcurrent for that).
+	return NewSourceService(pool, store, reader, chunker, bus, res, vs, res, 100)
 }
 
 // runPipelineWithDefaults drives the pipeline the way the background indexing
@@ -583,6 +586,7 @@ func newSvcWithResolver(ctx context.Context, t *testing.T, res stubResolver) *So
 		res,
 		stubVectorStore{},
 		res,
+		100,
 	)
 }
 
@@ -1132,6 +1136,49 @@ func TestServiceIngest_AlreadyIndexing(t *testing.T) {
 
 	if err := svc.Ingest(ctx, src.ID); !errors.Is(err, ErrAlreadyIndexing) {
 		t.Fatalf("Ingest on already-indexing source = %v, want ErrAlreadyIndexing", err)
+	}
+}
+
+// TestRunIndexJob_RespectsMaxConcurrent verifies the semaphore added for #44:
+// no more than indexSem's capacity run their job concurrently, and jobs beyond
+// the cap wait for a slot rather than being rejected. Uses a bare SourceService
+// literal — no Postgres/MinIO/network dependency — so it runs without Docker.
+func TestRunIndexJob_RespectsMaxConcurrent(t *testing.T) {
+	const limit = 2
+	svc := &SourceService{indexSem: make(chan struct{}, limit)}
+
+	var current, maxSeen int32
+	gate := make(chan struct{}) // closed once to release every job together
+
+	const jobs = 8
+	var wg sync.WaitGroup
+	wg.Add(jobs)
+	for i := 0; i < jobs; i++ {
+		go svc.runIndexJob(func() {
+			defer wg.Done()
+			n := atomic.AddInt32(&current, 1)
+			for {
+				old := atomic.LoadInt32(&maxSeen)
+				if n <= old || atomic.CompareAndSwapInt32(&maxSeen, old, n) {
+					break
+				}
+			}
+			<-gate
+			atomic.AddInt32(&current, -1)
+		})
+	}
+
+	// Give the first `limit` jobs time to acquire a slot and block on gate.
+	time.Sleep(50 * time.Millisecond)
+	if got := atomic.LoadInt32(&current); got != limit {
+		t.Fatalf("in-flight jobs while queue is full = %d, want %d", got, limit)
+	}
+
+	close(gate)
+	wg.Wait()
+
+	if maxSeen > limit {
+		t.Fatalf("max concurrent jobs = %d, want <= %d", maxSeen, limit)
 	}
 }
 

@@ -25,6 +25,7 @@ type Config struct {
 	Auth     Auth     `envconfig:"AUTH"`
 	Reranker Reranker `envconfig:"RERANKER"`
 	Secrets  Secrets  `envconfig:"SECRETS"`
+	Indexing Indexing `envconfig:"INDEXING"`
 }
 
 // Server contains HTTP server configuration.
@@ -141,6 +142,15 @@ type Auth struct {
 	CookieSecure bool `envconfig:"COOKIE_SECURE" default:"false"`
 	// PostLoginURL is where the browser is redirected after a successful login.
 	PostLoginURL string `envconfig:"POST_LOGIN_URL" default:"http://localhost:3000"`
+}
+
+// Indexing contains background-indexing concurrency settings.
+type Indexing struct {
+	// MaxConcurrent caps how many indexing pipelines (Create/Ingest) run at once,
+	// via a buffered-channel semaphore in SourceService. Requests beyond the cap
+	// wait rather than fail. Must be >= 1: a zero-capacity channel can never be
+	// acquired, permanently deadlocking every indexing goroutine.
+	MaxConcurrent int `envconfig:"MAX_CONCURRENT" default:"8" validate:"gte=1"`
 }
 
 var (

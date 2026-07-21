@@ -446,6 +446,60 @@ func TestLoadConfig_ServerHardeningDefaultsAndOverrides(t *testing.T) {
 	}
 }
 
+// Ensures Indexing.MaxConcurrent defaults to 8 and can be overridden.
+func TestLoadConfig_IndexingMaxConcurrentDefaultAndOverride(t *testing.T) {
+	resetGlobals()
+
+	configDir := t.TempDir()
+	t.Setenv("CONFIG_DIR", configDir)
+	setValidEnv(t)
+
+	cfg, err := loadConfig()
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+	if cfg.Indexing.MaxConcurrent != 8 {
+		t.Errorf("expected MaxConcurrent default 8, got %d", cfg.Indexing.MaxConcurrent)
+	}
+
+	resetGlobals()
+	t.Setenv("CONFIG_DIR", configDir)
+	setValidEnv(t)
+	t.Setenv("INDEXING_MAX_CONCURRENT", "20")
+
+	cfg, err = loadConfig()
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+	if cfg.Indexing.MaxConcurrent != 20 {
+		t.Errorf("expected MaxConcurrent 20, got %d", cfg.Indexing.MaxConcurrent)
+	}
+}
+
+// Ensures a zero or negative Indexing.MaxConcurrent is rejected: a zero-capacity
+// semaphore channel can never be acquired, permanently deadlocking every
+// indexing goroutine, so this must fail fast at startup instead.
+func TestLoadConfig_IndexingMaxConcurrentRejectsNonPositive(t *testing.T) {
+	for _, v := range []string{"0", "-1"} {
+		t.Run(v, func(t *testing.T) {
+			resetGlobals()
+
+			configDir := t.TempDir()
+			t.Setenv("CONFIG_DIR", configDir)
+			setValidEnv(t)
+			t.Setenv("INDEXING_MAX_CONCURRENT", v)
+
+			_, err := loadConfig()
+			if err == nil {
+				t.Fatalf("expected validation error, got nil")
+			}
+			if !strings.Contains(err.Error(), "Indexing.MaxConcurrent") {
+				t.Fatalf("expected Indexing.MaxConcurrent validation error, got: %v", err)
+			}
+		})
+	}
+}
+
 // Ensures each required string field is validated when missing.
 func TestLoadConfig_MissingRequiredStringFields(t *testing.T) {
 	required := []struct {
