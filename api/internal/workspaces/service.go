@@ -9,8 +9,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/jpgomesr/NeuralVault/internal/model"
-	"github.com/jpgomesr/NeuralVault/internal/storage"
+	"github.com/jpgomesr/neuralvault/api/internal/model"
+	"github.com/jpgomesr/neuralvault/api/internal/storage"
 )
 
 // Service manages workspaces and answers membership questions.

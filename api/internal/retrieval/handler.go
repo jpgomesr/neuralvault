@@ -10,14 +10,14 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jpgomesr/NeuralVault/internal/catalog"
-	"github.com/jpgomesr/NeuralVault/internal/conversations"
-	"github.com/jpgomesr/NeuralVault/internal/httperr"
-	"github.com/jpgomesr/NeuralVault/internal/llm"
-	"github.com/jpgomesr/NeuralVault/internal/logger"
-	"github.com/jpgomesr/NeuralVault/internal/model"
-	"github.com/jpgomesr/NeuralVault/internal/modelconfig"
-	"github.com/jpgomesr/NeuralVault/internal/workspaces"
+	"github.com/jpgomesr/neuralvault/api/internal/catalog"
+	"github.com/jpgomesr/neuralvault/api/internal/conversations"
+	"github.com/jpgomesr/neuralvault/api/internal/httperr"
+	"github.com/jpgomesr/neuralvault/api/internal/llm"
+	"github.com/jpgomesr/neuralvault/api/internal/logger"
+	"github.com/jpgomesr/neuralvault/api/internal/model"
+	"github.com/jpgomesr/neuralvault/api/internal/modelconfig"
+	"github.com/jpgomesr/neuralvault/api/internal/workspaces"
 )
 
 // sseHeartbeatInterval bounds how long the SSE stream can stay silent while

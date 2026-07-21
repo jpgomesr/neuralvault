@@ -11,8 +11,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jpgomesr/NeuralVault/internal/llm"
-	"github.com/jpgomesr/NeuralVault/internal/llm/anthropic"
+	"github.com/jpgomesr/neuralvault/api/internal/llm"
+	"github.com/jpgomesr/neuralvault/api/internal/llm/anthropic"
 )
 
 func newTestClient(t *testing.T, path string, handler http.HandlerFunc) *anthropic.Client {

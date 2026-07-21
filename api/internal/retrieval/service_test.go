@@ -18,14 +18,14 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 
-	"github.com/jpgomesr/NeuralVault/internal/config"
-	"github.com/jpgomesr/NeuralVault/internal/embedding"
-	"github.com/jpgomesr/NeuralVault/internal/llm"
-	"github.com/jpgomesr/NeuralVault/internal/model"
-	"github.com/jpgomesr/NeuralVault/internal/reranking"
-	"github.com/jpgomesr/NeuralVault/internal/storage"
-	pgstore "github.com/jpgomesr/NeuralVault/internal/storage/postgres"
-	"github.com/jpgomesr/NeuralVault/internal/vectorstorage"
+	"github.com/jpgomesr/neuralvault/api/internal/config"
+	"github.com/jpgomesr/neuralvault/api/internal/embedding"
+	"github.com/jpgomesr/neuralvault/api/internal/llm"
+	"github.com/jpgomesr/neuralvault/api/internal/model"
+	"github.com/jpgomesr/neuralvault/api/internal/reranking"
+	"github.com/jpgomesr/neuralvault/api/internal/storage"
+	pgstore "github.com/jpgomesr/neuralvault/api/internal/storage/postgres"
+	"github.com/jpgomesr/neuralvault/api/internal/vectorstorage"
 )
 
 const testVectorSize = 8

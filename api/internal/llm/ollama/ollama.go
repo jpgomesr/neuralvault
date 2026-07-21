@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jpgomesr/NeuralVault/internal/config"
-	"github.com/jpgomesr/NeuralVault/internal/llm/types"
+	"github.com/jpgomesr/neuralvault/api/internal/config"
+	"github.com/jpgomesr/neuralvault/api/internal/llm/types"
 )
 
 // Client is an llm.Provider backed by an Ollama server's /api/chat endpoint.

@@ -8,11 +8,11 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
-	"github.com/jpgomesr/NeuralVault/internal/catalog"
-	"github.com/jpgomesr/NeuralVault/internal/config"
-	"github.com/jpgomesr/NeuralVault/internal/embedding/ollama"
-	"github.com/jpgomesr/NeuralVault/internal/embedding/openaicompat"
-	"github.com/jpgomesr/NeuralVault/internal/embedding/types"
+	"github.com/jpgomesr/neuralvault/api/internal/catalog"
+	"github.com/jpgomesr/neuralvault/api/internal/config"
+	"github.com/jpgomesr/neuralvault/api/internal/embedding/ollama"
+	"github.com/jpgomesr/neuralvault/api/internal/embedding/openaicompat"
+	"github.com/jpgomesr/neuralvault/api/internal/embedding/types"
 )
 
 // Chunk and Embedding are re-exported from the shared types package so callers

@@ -5,10 +5,10 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/jpgomesr/NeuralVault/internal/auth"
-	"github.com/jpgomesr/NeuralVault/internal/httperr"
-	"github.com/jpgomesr/NeuralVault/internal/logger"
-	"github.com/jpgomesr/NeuralVault/internal/model"
+	"github.com/jpgomesr/neuralvault/api/internal/auth"
+	"github.com/jpgomesr/neuralvault/api/internal/httperr"
+	"github.com/jpgomesr/neuralvault/api/internal/logger"
+	"github.com/jpgomesr/neuralvault/api/internal/model"
 )
 
 // Handler holds HTTP handler methods for the workspaces domain.

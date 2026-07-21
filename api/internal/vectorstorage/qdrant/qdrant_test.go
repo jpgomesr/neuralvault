@@ -9,8 +9,8 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 
-	"github.com/jpgomesr/NeuralVault/internal/config"
-	localqdrant "github.com/jpgomesr/NeuralVault/internal/vectorstorage/qdrant"
+	"github.com/jpgomesr/neuralvault/api/internal/config"
+	localqdrant "github.com/jpgomesr/neuralvault/api/internal/vectorstorage/qdrant"
 )
 
 var sharedCfg *config.Config

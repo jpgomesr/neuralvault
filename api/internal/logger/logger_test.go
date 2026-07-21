@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/go-chi/chi/v5/middleware"
-	"github.com/jpgomesr/NeuralVault/internal/logger"
+	"github.com/jpgomesr/neuralvault/api/internal/logger"
 )
 
 func TestRequestID_NoMiddleware(t *testing.T) {

@@ -7,8 +7,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/jpgomesr/NeuralVault/internal/chunking"
-	"github.com/jpgomesr/NeuralVault/internal/model"
+	"github.com/jpgomesr/neuralvault/api/internal/chunking"
+	"github.com/jpgomesr/neuralvault/api/internal/model"
 )
 
 // Reader converts a registered model.Source into chunk requests.

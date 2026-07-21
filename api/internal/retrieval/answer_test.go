@@ -8,7 +8,7 @@ import (
 	"github.com/google/uuid"
 	qdrantpb "github.com/qdrant/go-client/qdrant"
 
-	"github.com/jpgomesr/NeuralVault/internal/llm"
+	"github.com/jpgomesr/neuralvault/api/internal/llm"
 )
 
 // fakeProvider is an llm.Provider that returns a preset stream, recording the

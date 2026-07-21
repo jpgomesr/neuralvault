@@ -1,4 +1,4 @@
-module github.com/jpgomesr/NeuralVault
+module github.com/jpgomesr/neuralvault/api
 
 go 1.26.5
 

@@ -5,7 +5,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/jpgomesr/NeuralVault/internal/catalog"
+	"github.com/jpgomesr/neuralvault/api/internal/catalog"
 )
 
 // ProviderCredential is a workspace's API key for one provider (BYOK).

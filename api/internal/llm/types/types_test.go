@@ -3,7 +3,7 @@ package types_test
 import (
 	"testing"
 
-	"github.com/jpgomesr/NeuralVault/internal/llm/types"
+	"github.com/jpgomesr/neuralvault/api/internal/llm/types"
 )
 
 func TestUsage_CacheFieldsDefaultToZero(t *testing.T) {

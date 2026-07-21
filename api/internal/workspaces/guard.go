@@ -6,9 +6,9 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/jpgomesr/NeuralVault/internal/auth"
-	"github.com/jpgomesr/NeuralVault/internal/httperr"
-	"github.com/jpgomesr/NeuralVault/internal/logger"
+	"github.com/jpgomesr/neuralvault/api/internal/auth"
+	"github.com/jpgomesr/neuralvault/api/internal/httperr"
+	"github.com/jpgomesr/neuralvault/api/internal/logger"
 )
 
 // EnsureMember enforces tenant isolation for a workspace-scoped request. It

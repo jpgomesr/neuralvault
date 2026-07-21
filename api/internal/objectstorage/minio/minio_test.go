@@ -12,9 +12,9 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 
-	"github.com/jpgomesr/NeuralVault/internal/config"
-	"github.com/jpgomesr/NeuralVault/internal/objectstorage"
-	localminio "github.com/jpgomesr/NeuralVault/internal/objectstorage/minio"
+	"github.com/jpgomesr/neuralvault/api/internal/config"
+	"github.com/jpgomesr/neuralvault/api/internal/objectstorage"
+	localminio "github.com/jpgomesr/neuralvault/api/internal/objectstorage/minio"
 )
 
 var sharedCfg *config.Config

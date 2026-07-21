@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jpgomesr/NeuralVault/internal/config"
+	"github.com/jpgomesr/neuralvault/api/internal/config"
 )
 
 func TestStartHTTPServer_usesConfiguredPort(t *testing.T) {

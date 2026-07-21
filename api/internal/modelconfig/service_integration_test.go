@@ -10,10 +10,10 @@ import (
 
 	qdrantpb "github.com/qdrant/go-client/qdrant"
 
-	"github.com/jpgomesr/NeuralVault/internal/catalog"
-	"github.com/jpgomesr/NeuralVault/internal/config"
-	"github.com/jpgomesr/NeuralVault/internal/crypto"
-	"github.com/jpgomesr/NeuralVault/internal/vectorstorage"
+	"github.com/jpgomesr/neuralvault/api/internal/catalog"
+	"github.com/jpgomesr/neuralvault/api/internal/config"
+	"github.com/jpgomesr/neuralvault/api/internal/crypto"
+	"github.com/jpgomesr/neuralvault/api/internal/vectorstorage"
 )
 
 // fakeVectorStore is a vectorstorage.Client test double. SetEmbedding's call

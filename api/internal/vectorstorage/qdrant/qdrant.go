@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/jpgomesr/NeuralVault/internal/config"
+	"github.com/jpgomesr/neuralvault/api/internal/config"
 	"github.com/qdrant/go-client/qdrant"
 )
 

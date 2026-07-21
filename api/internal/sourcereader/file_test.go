@@ -8,8 +8,8 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/jpgomesr/NeuralVault/internal/chunking"
-	"github.com/jpgomesr/NeuralVault/internal/model"
+	"github.com/jpgomesr/neuralvault/api/internal/chunking"
+	"github.com/jpgomesr/neuralvault/api/internal/model"
 )
 
 // makeSource builds a file source. The walk root is passed to Read separately

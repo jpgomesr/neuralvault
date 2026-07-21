@@ -10,10 +10,10 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
-	"github.com/jpgomesr/NeuralVault/internal/catalog"
-	"github.com/jpgomesr/NeuralVault/internal/httperr"
-	"github.com/jpgomesr/NeuralVault/internal/logger"
-	"github.com/jpgomesr/NeuralVault/internal/workspaces"
+	"github.com/jpgomesr/neuralvault/api/internal/catalog"
+	"github.com/jpgomesr/neuralvault/api/internal/httperr"
+	"github.com/jpgomesr/neuralvault/api/internal/logger"
+	"github.com/jpgomesr/neuralvault/api/internal/workspaces"
 )
 
 // Reindexer re-runs ingestion for every source in a workspace, returning how

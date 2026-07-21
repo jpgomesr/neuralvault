@@ -8,8 +8,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/jpgomesr/NeuralVault/internal/chunking"
-	"github.com/jpgomesr/NeuralVault/internal/model"
+	"github.com/jpgomesr/neuralvault/api/internal/chunking"
+	"github.com/jpgomesr/neuralvault/api/internal/model"
 )
 
 // FileReader reads content from a local directory tree.

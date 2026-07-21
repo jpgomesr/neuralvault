@@ -11,9 +11,9 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/jpgomesr/NeuralVault/internal/httperr"
-	"github.com/jpgomesr/NeuralVault/internal/logger"
-	"github.com/jpgomesr/NeuralVault/internal/model"
+	"github.com/jpgomesr/neuralvault/api/internal/httperr"
+	"github.com/jpgomesr/neuralvault/api/internal/logger"
+	"github.com/jpgomesr/neuralvault/api/internal/model"
 )
 
 const (

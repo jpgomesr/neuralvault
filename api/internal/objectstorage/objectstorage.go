@@ -6,8 +6,8 @@ import (
 	"context"
 	"io"
 
-	"github.com/jpgomesr/NeuralVault/internal/config"
-	"github.com/jpgomesr/NeuralVault/internal/objectstorage/minio"
+	"github.com/jpgomesr/neuralvault/api/internal/config"
+	"github.com/jpgomesr/neuralvault/api/internal/objectstorage/minio"
 )
 
 // Client stores and retrieves objects. Implementations must be safe for concurrent use.

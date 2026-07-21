@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/jpgomesr/NeuralVault/internal/config"
+	"github.com/jpgomesr/neuralvault/api/internal/config"
 )
 
 func NewPool(ctx context.Context, cfg config.Config) (*pgxpool.Pool, error) {

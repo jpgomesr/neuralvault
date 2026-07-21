@@ -11,8 +11,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/jpgomesr/NeuralVault/internal/config"
-	"github.com/jpgomesr/NeuralVault/internal/reranking/types"
+	"github.com/jpgomesr/neuralvault/api/internal/config"
+	"github.com/jpgomesr/neuralvault/api/internal/reranking/types"
 )
 
 // defaultHTTPTimeout bounds a single HTTP round-trip to the reranker

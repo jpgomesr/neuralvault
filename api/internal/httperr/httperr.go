@@ -9,7 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/jpgomesr/NeuralVault/internal/logger"
+	"github.com/jpgomesr/neuralvault/api/internal/logger"
 )
 
 const genericMessage = "internal server error"

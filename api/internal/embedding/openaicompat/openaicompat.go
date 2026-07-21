@@ -16,7 +16,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jpgomesr/NeuralVault/internal/embedding/types"
+	"github.com/jpgomesr/neuralvault/api/internal/embedding/types"
 )
 
 // defaultHTTPTimeout bounds a single round-trip independent of the caller's

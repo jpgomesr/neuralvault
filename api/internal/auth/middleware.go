@@ -4,7 +4,7 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/jpgomesr/NeuralVault/internal/logger"
+	"github.com/jpgomesr/neuralvault/api/internal/logger"
 )
 
 // RequireUser is middleware that authenticates the caller from the session

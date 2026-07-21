@@ -6,9 +6,9 @@ package reranking
 import (
 	"context"
 
-	"github.com/jpgomesr/NeuralVault/internal/config"
-	"github.com/jpgomesr/NeuralVault/internal/reranking/tei"
-	"github.com/jpgomesr/NeuralVault/internal/reranking/types"
+	"github.com/jpgomesr/neuralvault/api/internal/config"
+	"github.com/jpgomesr/neuralvault/api/internal/reranking/tei"
+	"github.com/jpgomesr/neuralvault/api/internal/reranking/types"
 )
 
 // Candidate and Result are re-exported from the shared types package so

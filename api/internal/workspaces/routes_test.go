@@ -8,7 +8,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/jpgomesr/NeuralVault/internal/model"
+	"github.com/jpgomesr/neuralvault/api/internal/model"
 )
 
 // TestRoutes confirms both endpoints are mounted on the subrouter. Auth is
