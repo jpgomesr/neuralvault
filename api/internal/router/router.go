@@ -24,7 +24,7 @@ import (
 	"github.com/jpgomesr/NeuralVault/internal/storage"
 	"github.com/jpgomesr/NeuralVault/internal/vectorstorage"
 	"github.com/jpgomesr/NeuralVault/internal/workspaces"
-	httpSwagger "github.com/swaggo/http-swagger"
+	httpSwagger "github.com/swaggo/http-swagger/v2"
 )
 
 func NewRouter(cfg *config.Config, pool storage.Pool, store objectstorage.Client, embedder embedding.Embedder, vectorStore vectorstorage.Client, llmProvider llm.Provider, reranker reranking.Reranker, authService auth.Service) *chi.Mux {
