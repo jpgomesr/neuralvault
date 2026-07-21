@@ -18,7 +18,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jpgomesr/NeuralVault/internal/llm/types"
+	"github.com/jpgomesr/neuralvault/api/internal/llm/types"
 )
 
 // Client is an llm.Provider backed by an OpenAI-compatible chat API.

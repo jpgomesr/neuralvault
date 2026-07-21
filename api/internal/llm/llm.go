@@ -8,12 +8,12 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
-	"github.com/jpgomesr/NeuralVault/internal/catalog"
-	"github.com/jpgomesr/NeuralVault/internal/config"
-	"github.com/jpgomesr/NeuralVault/internal/llm/anthropic"
-	"github.com/jpgomesr/NeuralVault/internal/llm/ollama"
-	"github.com/jpgomesr/NeuralVault/internal/llm/openaicompat"
-	"github.com/jpgomesr/NeuralVault/internal/llm/types"
+	"github.com/jpgomesr/neuralvault/api/internal/catalog"
+	"github.com/jpgomesr/neuralvault/api/internal/config"
+	"github.com/jpgomesr/neuralvault/api/internal/llm/anthropic"
+	"github.com/jpgomesr/neuralvault/api/internal/llm/ollama"
+	"github.com/jpgomesr/neuralvault/api/internal/llm/openaicompat"
+	"github.com/jpgomesr/neuralvault/api/internal/llm/types"
 )
 
 // Role, Message, CompletionRequest, CompletionResponse, Usage, StreamChunk and

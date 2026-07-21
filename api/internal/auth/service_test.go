@@ -18,8 +18,8 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 	"golang.org/x/oauth2"
 
-	"github.com/jpgomesr/NeuralVault/internal/config"
-	pgstore "github.com/jpgomesr/NeuralVault/internal/storage/postgres"
+	"github.com/jpgomesr/neuralvault/api/internal/config"
+	pgstore "github.com/jpgomesr/neuralvault/api/internal/storage/postgres"
 )
 
 // testProvider labels the identity source in the user_identity table for tests.

@@ -10,7 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
-	"github.com/jpgomesr/NeuralVault/internal/model"
+	"github.com/jpgomesr/neuralvault/api/internal/model"
 )
 
 // errPool is a storage.Pool that fails the operations a test selects, so the

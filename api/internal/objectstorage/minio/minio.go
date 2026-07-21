@@ -13,7 +13,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
-	"github.com/jpgomesr/NeuralVault/internal/config"
+	"github.com/jpgomesr/neuralvault/api/internal/config"
 )
 
 // Client wraps the AWS S3 client pointed at a MinIO endpoint.

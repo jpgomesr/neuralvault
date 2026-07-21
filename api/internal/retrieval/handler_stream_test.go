@@ -10,8 +10,8 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/jpgomesr/NeuralVault/internal/llm"
-	"github.com/jpgomesr/NeuralVault/internal/model"
+	"github.com/jpgomesr/neuralvault/api/internal/llm"
+	"github.com/jpgomesr/neuralvault/api/internal/model"
 )
 
 // These cover the QueryStream branches the happy-path/forbidden tests don't

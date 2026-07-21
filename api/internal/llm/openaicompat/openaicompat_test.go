@@ -11,8 +11,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jpgomesr/NeuralVault/internal/llm"
-	"github.com/jpgomesr/NeuralVault/internal/llm/openaicompat"
+	"github.com/jpgomesr/neuralvault/api/internal/llm"
+	"github.com/jpgomesr/neuralvault/api/internal/llm/openaicompat"
 )
 
 // newTestClient serves handler at the given path and returns a client pointed

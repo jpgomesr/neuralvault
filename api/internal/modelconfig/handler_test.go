@@ -12,9 +12,9 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
-	"github.com/jpgomesr/NeuralVault/internal/catalog"
-	"github.com/jpgomesr/NeuralVault/internal/llm"
-	"github.com/jpgomesr/NeuralVault/internal/model"
+	"github.com/jpgomesr/neuralvault/api/internal/catalog"
+	"github.com/jpgomesr/neuralvault/api/internal/llm"
+	"github.com/jpgomesr/neuralvault/api/internal/model"
 )
 
 type errTest string

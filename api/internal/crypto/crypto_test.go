@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jpgomesr/NeuralVault/internal/crypto"
+	"github.com/jpgomesr/neuralvault/api/internal/crypto"
 )
 
 // testKey is a valid base64-encoded 32-byte key.

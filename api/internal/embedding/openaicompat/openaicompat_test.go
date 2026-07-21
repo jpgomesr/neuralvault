@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jpgomesr/NeuralVault/internal/embedding"
-	"github.com/jpgomesr/NeuralVault/internal/embedding/openaicompat"
+	"github.com/jpgomesr/neuralvault/api/internal/embedding"
+	"github.com/jpgomesr/neuralvault/api/internal/embedding/openaicompat"
 )
 
 func newTestClient(t *testing.T, path string, handler http.HandlerFunc) *openaicompat.Client {

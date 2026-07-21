@@ -17,14 +17,14 @@ import (
 	"github.com/google/uuid"
 	qdrantpb "github.com/qdrant/go-client/qdrant"
 
-	"github.com/jpgomesr/NeuralVault/internal/chunking"
-	"github.com/jpgomesr/NeuralVault/internal/embedding"
-	"github.com/jpgomesr/NeuralVault/internal/llm"
-	"github.com/jpgomesr/NeuralVault/internal/model"
-	"github.com/jpgomesr/NeuralVault/internal/objectstorage"
-	"github.com/jpgomesr/NeuralVault/internal/sourcereader"
-	"github.com/jpgomesr/NeuralVault/internal/storage"
-	"github.com/jpgomesr/NeuralVault/internal/vectorstorage"
+	"github.com/jpgomesr/neuralvault/api/internal/chunking"
+	"github.com/jpgomesr/neuralvault/api/internal/embedding"
+	"github.com/jpgomesr/neuralvault/api/internal/llm"
+	"github.com/jpgomesr/neuralvault/api/internal/model"
+	"github.com/jpgomesr/neuralvault/api/internal/objectstorage"
+	"github.com/jpgomesr/neuralvault/api/internal/sourcereader"
+	"github.com/jpgomesr/neuralvault/api/internal/storage"
+	"github.com/jpgomesr/neuralvault/api/internal/vectorstorage"
 )
 
 // ErrAlreadyIndexing is returned by Ingest when the source is already being

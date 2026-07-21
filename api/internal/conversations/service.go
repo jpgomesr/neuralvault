@@ -13,8 +13,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/jpgomesr/NeuralVault/internal/model"
-	"github.com/jpgomesr/NeuralVault/internal/storage"
+	"github.com/jpgomesr/neuralvault/api/internal/model"
+	"github.com/jpgomesr/neuralvault/api/internal/storage"
 )
 
 // ErrNotFound is returned by GetByID when no conversation exists with the

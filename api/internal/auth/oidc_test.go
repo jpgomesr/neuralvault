@@ -18,7 +18,7 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/jpgomesr/NeuralVault/internal/config"
+	"github.com/jpgomesr/neuralvault/api/internal/config"
 )
 
 // stubIDP is a minimal OIDC provider backed by httptest: it serves a discovery

@@ -14,7 +14,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
-	"github.com/jpgomesr/NeuralVault/internal/model"
+	"github.com/jpgomesr/neuralvault/api/internal/model"
 )
 
 // testMaxUpload is a generous upload cap used by handler tests that aren't

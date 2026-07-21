@@ -3,7 +3,7 @@ package model
 import (
 	"testing"
 
-	"github.com/jpgomesr/NeuralVault/internal/catalog"
+	"github.com/jpgomesr/neuralvault/api/internal/catalog"
 )
 
 func TestWorkspaceModelSettings_HasLLM(t *testing.T) {

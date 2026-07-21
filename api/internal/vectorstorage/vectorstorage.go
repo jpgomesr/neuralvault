@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/jpgomesr/NeuralVault/internal/config"
-	"github.com/jpgomesr/NeuralVault/internal/vectorstorage/qdrant"
+	"github.com/jpgomesr/neuralvault/api/internal/config"
+	"github.com/jpgomesr/neuralvault/api/internal/vectorstorage/qdrant"
 	qdrantpb "github.com/qdrant/go-client/qdrant"
 )
 

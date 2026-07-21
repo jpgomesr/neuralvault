@@ -12,11 +12,11 @@ import (
 
 	"github.com/google/uuid"
 
-	"github.com/jpgomesr/NeuralVault/internal/catalog"
-	"github.com/jpgomesr/NeuralVault/internal/config"
-	"github.com/jpgomesr/NeuralVault/internal/embedding"
-	"github.com/jpgomesr/NeuralVault/internal/llm"
-	"github.com/jpgomesr/NeuralVault/internal/model"
+	"github.com/jpgomesr/neuralvault/api/internal/catalog"
+	"github.com/jpgomesr/neuralvault/api/internal/config"
+	"github.com/jpgomesr/neuralvault/api/internal/embedding"
+	"github.com/jpgomesr/neuralvault/api/internal/llm"
+	"github.com/jpgomesr/neuralvault/api/internal/model"
 )
 
 // clientKeyMACKey is a random key generated once per process, used only to

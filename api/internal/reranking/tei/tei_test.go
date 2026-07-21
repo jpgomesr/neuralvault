@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jpgomesr/NeuralVault/internal/config"
-	"github.com/jpgomesr/NeuralVault/internal/reranking/tei"
-	"github.com/jpgomesr/NeuralVault/internal/reranking/types"
+	"github.com/jpgomesr/neuralvault/api/internal/config"
+	"github.com/jpgomesr/neuralvault/api/internal/reranking/tei"
+	"github.com/jpgomesr/neuralvault/api/internal/reranking/types"
 )
 
 // validInfoHandler serves a /info response matching the default test model.

@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jpgomesr/NeuralVault/internal/config"
-	"github.com/jpgomesr/NeuralVault/internal/embedding/types"
+	"github.com/jpgomesr/neuralvault/api/internal/config"
+	"github.com/jpgomesr/neuralvault/api/internal/embedding/types"
 )
 
 // defaultHTTPTimeout bounds a single HTTP round-trip to Ollama independent of

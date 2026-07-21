@@ -7,7 +7,7 @@ import (
 	"context"
 	"strings"
 
-	"github.com/jpgomesr/NeuralVault/internal/chunking"
+	"github.com/jpgomesr/neuralvault/api/internal/chunking"
 )
 
 const defaultMaxChars = 1500

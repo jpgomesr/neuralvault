@@ -11,9 +11,9 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 
-	"github.com/jpgomesr/NeuralVault/internal/config"
-	"github.com/jpgomesr/NeuralVault/internal/embedding"
-	"github.com/jpgomesr/NeuralVault/internal/embedding/ollama"
+	"github.com/jpgomesr/neuralvault/api/internal/config"
+	"github.com/jpgomesr/neuralvault/api/internal/embedding"
+	"github.com/jpgomesr/neuralvault/api/internal/embedding/ollama"
 )
 
 const testEmbeddingModel = "nomic-embed-text"

@@ -18,7 +18,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jpgomesr/NeuralVault/internal/llm/types"
+	"github.com/jpgomesr/neuralvault/api/internal/llm/types"
 )
 
 // apiVersion pins the Messages API version. Anthropic requires this header on

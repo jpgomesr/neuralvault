@@ -16,9 +16,9 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 
-	"github.com/jpgomesr/NeuralVault/internal/config"
-	"github.com/jpgomesr/NeuralVault/internal/model"
-	pgstore "github.com/jpgomesr/NeuralVault/internal/storage/postgres"
+	"github.com/jpgomesr/neuralvault/api/internal/config"
+	"github.com/jpgomesr/neuralvault/api/internal/model"
+	pgstore "github.com/jpgomesr/neuralvault/api/internal/storage/postgres"
 )
 
 var sharedPool *pgxpool.Pool

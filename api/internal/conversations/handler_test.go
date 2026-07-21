@@ -12,8 +12,8 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
-	"github.com/jpgomesr/NeuralVault/internal/model"
-	"github.com/jpgomesr/NeuralVault/internal/workspaces"
+	"github.com/jpgomesr/neuralvault/api/internal/model"
+	"github.com/jpgomesr/neuralvault/api/internal/workspaces"
 )
 
 // fakeService is a Service stand-in for exercising the HTTP layer without a
