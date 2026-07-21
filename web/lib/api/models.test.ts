@@ -96,6 +96,11 @@ describe("getModelSettings", () => {
     await expect(getModelSettings("w1")).resolves.toEqual(settings);
     expect(fetchMock).toHaveBeenCalledWith("/api/workspaces/w1/model-settings");
   });
+
+  it("falls back to the status code when there is no error body", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(null, { ok: false, status: 500 }));
+    await expect(getModelSettings("w1")).rejects.toThrow("get model settings failed: 500");
+  });
 });
 
 describe("setLLMSettings", () => {

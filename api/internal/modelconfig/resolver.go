@@ -2,6 +2,8 @@ package modelconfig
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -16,6 +18,22 @@ import (
 	"github.com/jpgomesr/NeuralVault/internal/llm"
 	"github.com/jpgomesr/NeuralVault/internal/model"
 )
+
+// clientKeyMACKey is a random key generated once per process, used only to
+// derive clientKey's cache key from an API key via HMAC. It deliberately
+// never leaves the process and is never persisted: a plain hash of the key
+// alone would let anyone who ever observed a cache key (e.g. in a memory
+// dump) brute-force it back to the underlying secret, since API keys don't
+// carry the entropy a password-hashing KDF assumes. Keying the hash removes
+// that risk without needing a slow KDF for what is otherwise just a
+// process-local map key.
+var clientKeyMACKey = func() []byte {
+	key := make([]byte, 32)
+	if _, err := rand.Read(key); err != nil {
+		panic("modelconfig: generating client-key MAC key: " + err.Error())
+	}
+	return key
+}()
 
 // configStore is the persistence the resolver reads. It is an interface, not
 // the concrete *store, so resolution can be tested without a database — the
@@ -52,7 +70,9 @@ func newResolver(s configStore, cfg *config.Config) *resolver {
 
 // clientKey identifies a built client by everything that affects its behaviour.
 func clientKey(provider catalog.Provider, model, baseURL, apiKey string) string {
-	sum := sha256.Sum256([]byte(apiKey))
+	mac := hmac.New(sha256.New, clientKeyMACKey)
+	mac.Write([]byte(apiKey)) //nolint:errcheck // hash.Hash.Write never returns an error
+	sum := mac.Sum(nil)
 	return fmt.Sprintf("%s|%s|%s|%s", provider, model, baseURL, hex.EncodeToString(sum[:8]))
 }
 

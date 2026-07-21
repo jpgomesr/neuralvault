@@ -2,6 +2,8 @@ package modelconfig
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"os"
@@ -21,10 +23,17 @@ import (
 	pgstore "github.com/jpgomesr/NeuralVault/internal/storage/postgres"
 )
 
-// testEncryptionKey is a throwaway base64-encoded 32-byte AES-256 key, the
-// same shape as SECRETS_ENCRYPTION_KEY — not a secret, since it only ever
-// protects data inside an ephemeral test container.
-const testEncryptionKey = "ZGV2LW9ubHkta2V5LWRvLW5vdC11c2UtaW4tcHJvZCE="
+// testEncryptionKey is a base64-encoded 32-byte AES-256 key generated fresh
+// per test run — not a secret (it only ever protects data inside an
+// ephemeral test container), and generated rather than a literal so it can
+// never look like a checked-in credential to a secret scanner.
+var testEncryptionKey = func() string {
+	key := make([]byte, crypto.KeySize)
+	if _, err := rand.Read(key); err != nil {
+		panic("modelconfig: generating test encryption key: " + err.Error())
+	}
+	return base64.StdEncoding.EncodeToString(key)
+}()
 
 var sharedPool *pgxpool.Pool
 
