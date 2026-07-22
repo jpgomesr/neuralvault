@@ -15,9 +15,12 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
+	"slices"
 	"strings"
 	"time"
 
+	"github.com/jpgomesr/neuralvault/api/internal/catalog"
 	"github.com/jpgomesr/neuralvault/api/internal/llm/types"
 )
 
@@ -333,9 +336,20 @@ type modelsResponse struct {
 	} `json:"data"`
 }
 
-// ListModels returns the models the API key can access, via GET /models.
-// It doubles as the credential probe: an invalid key fails here.
-func (c *Client) ListModels(ctx context.Context) ([]types.ModelInfo, error) {
+// ListModels returns the models the API key can access, via GET /models. It
+// doubles as the credential probe: an invalid key fails here.
+//
+// The OpenAI-compatible /models endpoint reports no per-model capability, so
+// purpose cannot be honored through it — every provider but Gemini ignores it
+// and returns the full list. Gemini is the one provider whose native API
+// (distinct from the OpenAI-compatible endpoint this client otherwise talks
+// to) reports which models support embedContent vs generateContent, so a
+// requested purpose routes there instead when set.
+func (c *Client) ListModels(ctx context.Context, purpose types.ModelPurpose) ([]types.ModelInfo, error) {
+	if c.provider == string(catalog.Gemini) && purpose != types.PurposeAny {
+		return c.listGeminiModelsByPurpose(ctx, purpose)
+	}
+
 	httpReq, err := c.newRequest(ctx, http.MethodGet, "/models", nil)
 	if err != nil {
 		return nil, err
@@ -364,6 +378,78 @@ func (c *Client) ListModels(ctx context.Context) ([]types.ModelInfo, error) {
 		// Gemini's OpenAI-compatible endpoint namespaces IDs as "models/<id>";
 		// strip it so the ID round-trips as a usable request model.
 		id := strings.TrimPrefix(m.ID, "models/")
+		models = append(models, types.ModelInfo{ID: id, Name: id})
+	}
+
+	return models, nil
+}
+
+// geminiNativeModelsURL derives Gemini's native models.list endpoint from the
+// OpenAI-compatible base URL this client otherwise talks to
+// (".../v1beta/openai" -> ".../v1beta/models"), rather than hardcoding a
+// second host — only the native API reports each model's
+// supportedGenerationMethods, which the OpenAI-compatible /models endpoint
+// does not. Deriving it this way also means a workspace's custom baseURL
+// override (or a test server) applies to both endpoints alike.
+func (c *Client) geminiNativeModelsURL() string {
+	return strings.TrimSuffix(c.baseURL, "/openai") + "/models"
+}
+
+type geminiModelsResponse struct {
+	Models []struct {
+		Name                       string   `json:"name"`
+		SupportedGenerationMethods []string `json:"supportedGenerationMethods"`
+	} `json:"models"`
+}
+
+// geminiGenerationMethod maps a ModelPurpose to the supportedGenerationMethods
+// value Gemini's native API uses to report it.
+func geminiGenerationMethod(purpose types.ModelPurpose) string {
+	if purpose == types.PurposeEmbedding {
+		return "embedContent"
+	}
+	return "generateContent"
+}
+
+// listGeminiModelsByPurpose lists Gemini's models via its native API and
+// keeps only those whose supportedGenerationMethods cover purpose — excluding,
+// for example, gemini-2.5-flash (chat-only) from an embedding picker, where it
+// would otherwise appear selectable and then fail on the first embed call.
+//
+// pageSize is set to the API's max (1000) since Gemini's catalog is well
+// under that, avoiding the need to page through pageToken. Auth is a "key"
+// query parameter, not the Bearer header the OpenAI-compatible endpoint uses
+// — the native API's own scheme.
+func (c *Client) listGeminiModelsByPurpose(ctx context.Context, purpose types.ModelPurpose) ([]types.ModelInfo, error) {
+	method := geminiGenerationMethod(purpose)
+
+	reqURL := c.geminiNativeModelsURL() + "?pageSize=1000&key=" + url.QueryEscape(c.apiKey)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("building gemini models request: %w", err)
+	}
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("calling gemini models endpoint: %w", err)
+	}
+	defer resp.Body.Close() //nolint:errcheck
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.decodeErrorBody(resp)
+	}
+
+	var out geminiModelsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, fmt.Errorf("decoding gemini models response: %w", err)
+	}
+
+	models := make([]types.ModelInfo, 0, len(out.Models))
+	for _, m := range out.Models {
+		if m.Name == "" || !slices.Contains(m.SupportedGenerationMethods, method) {
+			continue
+		}
+		id := strings.TrimPrefix(m.Name, "models/")
 		models = append(models, types.ModelInfo{ID: id, Name: id})
 	}
 

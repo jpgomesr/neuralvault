@@ -62,6 +62,25 @@ type ModelInfo struct {
 	Name string `json:"name"`
 }
 
+// ModelPurpose is what a listed model would be used for, so a ModelLister can
+// filter out models that would fail if picked for that purpose (e.g. a chat
+// model selected as an embedder).
+//
+// Most providers cannot self-report this per model and ignore it, returning
+// their full list regardless of purpose.
+type ModelPurpose string
+
+const (
+	// PurposeAny requests every model the credential can reach, unfiltered.
+	// Used when the caller only wants to confirm the credential works, not to
+	// populate a picker (see modelconfig.SaveCredential).
+	PurposeAny ModelPurpose = ""
+	// PurposeCompletion requests models usable for chat completions.
+	PurposeCompletion ModelPurpose = "completion"
+	// PurposeEmbedding requests models usable for embeddings.
+	PurposeEmbedding ModelPurpose = "embedding"
+)
+
 // StreamChunk is one incremental piece of a streamed completion.
 // Done is true on the final chunk; Content may be empty on that chunk.
 // The channel is closed after a final chunk (Done == true)

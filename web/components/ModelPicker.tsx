@@ -96,8 +96,8 @@ export default function ModelPicker({
 function useModelsForProviders(workspaceId: string, providers: Provider[]) {
   const results = useQueries({
     queries: providers.map((provider) => ({
-      queryKey: modelsQueryKey(workspaceId, provider),
-      queryFn: () => listModels(workspaceId, provider),
+      queryKey: modelsQueryKey(workspaceId, provider, "completion"),
+      queryFn: () => listModels(workspaceId, provider, "completion"),
       staleTime: 5 * 60 * 1000,
       retry: false,
     })),

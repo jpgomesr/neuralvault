@@ -29,7 +29,7 @@ import {
   useSetEmbeddingMutation,
   useSetLLMMutation,
 } from "@/hooks/use-models";
-import type { EmbeddingChange, Provider, ProviderStatus } from "@/lib/api/models";
+import type { EmbeddingChange, ModelPurpose, Provider, ProviderStatus } from "@/lib/api/models";
 
 /**
  * ModelSettingsDialog is where a workspace brings its own API key (BYOK) and
@@ -226,6 +226,7 @@ function ModelPickers({
       <ModelPicker
         label="Completion"
         description="Answers your questions."
+        purpose="completion"
         workspaceId={workspaceId}
         providers={llmProviders}
         provider={llmProvider}
@@ -245,6 +246,7 @@ function ModelPickers({
       <ModelPicker
         label="Embedding"
         description="Indexes your sources. Changing it requires a re-index."
+        purpose="embedding"
         workspaceId={workspaceId}
         providers={embProviders}
         provider={embProvider}
@@ -295,6 +297,7 @@ function ModelPickers({
 function ModelPicker({
   label,
   description,
+  purpose,
   workspaceId,
   providers,
   provider,
@@ -305,6 +308,7 @@ function ModelPicker({
 }: {
   label: string;
   description: string;
+  purpose: ModelPurpose;
   workspaceId: string;
   providers: ProviderStatus[];
   provider: Provider | "";
@@ -313,7 +317,7 @@ function ModelPicker({
   pending: boolean;
   onSelect: (provider: Provider, model: string) => void;
 }) {
-  const models = useModels(workspaceId, provider || null, !!provider);
+  const models = useModels(workspaceId, provider || null, purpose, !!provider);
 
   return (
     <div className="flex flex-col gap-1.5">

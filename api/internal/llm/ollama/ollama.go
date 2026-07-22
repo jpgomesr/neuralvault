@@ -54,8 +54,10 @@ func NewWithModel(ctx context.Context, baseURL, model string) (*Client, error) {
 	return c, nil
 }
 
-// ListModels returns the models pulled on the Ollama server.
-func (c *Client) ListModels(ctx context.Context) ([]types.ModelInfo, error) {
+// ListModels returns the models pulled on the Ollama server. purpose is
+// ignored: Ollama's tag list carries no per-model capability info, so chat
+// and embedding models are indistinguishable here.
+func (c *Client) ListModels(ctx context.Context, purpose types.ModelPurpose) ([]types.ModelInfo, error) {
 	tags, err := c.fetchTags(ctx)
 	if err != nil {
 		return nil, err

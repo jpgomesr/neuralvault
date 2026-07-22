@@ -405,8 +405,10 @@ type modelsResponse struct {
 }
 
 // ListModels returns the models the API key can access, via GET /v1/models.
-// It doubles as the credential probe: an invalid key fails here.
-func (c *Client) ListModels(ctx context.Context) ([]types.ModelInfo, error) {
+// It doubles as the credential probe: an invalid key fails here. purpose is
+// ignored: Anthropic serves completions only (see catalog.Anthropic), so
+// there is nothing to filter.
+func (c *Client) ListModels(ctx context.Context, purpose types.ModelPurpose) ([]types.ModelInfo, error) {
 	httpReq, err := c.newRequest(ctx, http.MethodGet, "/v1/models", nil)
 	if err != nil {
 		return nil, err

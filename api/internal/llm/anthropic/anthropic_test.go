@@ -295,7 +295,7 @@ func TestListModels(t *testing.T) {
 		})
 	})
 
-	models, err := client.ListModels(context.Background())
+	models, err := client.ListModels(context.Background(), llm.PurposeAny)
 	if err != nil {
 		t.Fatalf("ListModels: %v", err)
 	}
@@ -562,7 +562,7 @@ func TestStream_MarshalError(t *testing.T) {
 func TestListModels_InvalidBaseURL(t *testing.T) {
 	client := anthropic.New("://bad-url", "test-key", "claude-sonnet-5")
 
-	_, err := client.ListModels(context.Background())
+	_, err := client.ListModels(context.Background(), llm.PurposeAny)
 	if err == nil {
 		t.Fatal("ListModels with an invalid base URL = nil error, want an error")
 	}
@@ -573,7 +573,7 @@ func TestListModels_ConnectionRefused(t *testing.T) {
 	client := anthropic.New(srv.URL, "test-key", "claude-sonnet-5")
 	srv.Close()
 
-	_, err := client.ListModels(context.Background())
+	_, err := client.ListModels(context.Background(), llm.PurposeAny)
 	if err == nil {
 		t.Fatal("ListModels against a closed server = nil error, want a connection error")
 	}
@@ -587,7 +587,7 @@ func TestListModels_ErrorStatus(t *testing.T) {
 		})
 	})
 
-	_, err := client.ListModels(context.Background())
+	_, err := client.ListModels(context.Background(), llm.PurposeAny)
 	if err == nil {
 		t.Fatal("ListModels with bad key = nil error, want error")
 	}
@@ -602,7 +602,7 @@ func TestListModels_MalformedResponseBody(t *testing.T) {
 		_, _ = fmt.Fprint(w, "not json")
 	})
 
-	_, err := client.ListModels(context.Background())
+	_, err := client.ListModels(context.Background(), llm.PurposeAny)
 	if err == nil {
 		t.Fatal("ListModels = nil error, want a decode error")
 	}
@@ -622,7 +622,7 @@ func TestListModels_SkipsEntriesWithNoID(t *testing.T) {
 		})
 	})
 
-	models, err := client.ListModels(context.Background())
+	models, err := client.ListModels(context.Background(), llm.PurposeAny)
 	if err != nil {
 		t.Fatalf("ListModels: %v", err)
 	}

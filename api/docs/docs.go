@@ -974,7 +974,7 @@ const docTemplate = `{
         },
         "/workspaces/{workspace_id}/providers/{provider}/models": {
             "get": {
-                "description": "Lists the models the workspace's API key can reach, fetched live from the provider rather than from a hardcoded list.",
+                "description": "Lists the models the workspace's API key can reach, fetched live from the provider rather than from a hardcoded list. If purpose is set and the provider can self-report per-model capability, the list is filtered to models usable for that purpose (e.g. excluding chat-only models from an embedding picker); otherwise purpose is ignored and the full list is returned.",
                 "produces": [
                     "application/json"
                 ],
@@ -996,6 +996,16 @@ const docTemplate = `{
                         "name": "provider",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "enum": [
+                            "completion",
+                            "embedding"
+                        ],
+                        "type": "string",
+                        "description": "Filter to models usable for this purpose",
+                        "name": "purpose",
+                        "in": "query"
                     }
                 ],
                 "responses": {
