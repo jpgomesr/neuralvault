@@ -230,4 +230,97 @@ func TestEmbed_EmptyVector(t *testing.T) {
 	}
 }
 
+// TestEmbed_RetriesOn429 covers the happy retry path: a transient rate limit
+// resolves within maxRetries, so the caller gets a result instead of an error.
+func TestEmbed_RetriesOn429(t *testing.T) {
+	var calls int
+	client := newTestClient(t, "/embeddings", func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		if calls < 3 {
+			w.Header().Set("Retry-After", "0")
+			w.WriteHeader(http.StatusTooManyRequests)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"error": map[string]string{"message": "rate limited"},
+			})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": []map[string]any{{"index": 0, "embedding": []float32{0.1}}},
+		})
+	})
+
+	vector, err := client.Embed(context.Background(), "hello")
+	if err != nil {
+		t.Fatalf("Embed: %v", err)
+	}
+	if len(vector) != 1 {
+		t.Fatalf("len(vector) = %d, want 1", len(vector))
+	}
+	if calls != 3 {
+		t.Errorf("calls = %d, want 3", calls)
+	}
+}
+
+// TestEmbed_GivesUpAfterMaxRetries covers a 429 that never clears (e.g. a
+// daily quota, not a transient per-minute limit): the client must eventually
+// surface the error instead of retrying forever.
+func TestEmbed_GivesUpAfterMaxRetries(t *testing.T) {
+	var calls int
+	client := newTestClient(t, "/embeddings", func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		w.Header().Set("Retry-After", "0")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"error": map[string]string{"message": "quota exceeded"},
+		})
+	})
+
+	_, err := client.Embed(context.Background(), "hello")
+	if err == nil {
+		t.Fatal("Embed with sustained 429s = nil error, want error")
+	}
+	if !strings.Contains(err.Error(), "quota exceeded") {
+		t.Errorf("error = %v, want it to carry the provider message", err)
+	}
+	const wantCalls = 5 // one initial attempt + maxRetries retries
+	if calls != wantCalls {
+		t.Errorf("calls = %d, want %d", calls, wantCalls)
+	}
+}
+
+// TestEmbed_429AbortsOnContextCancellation covers that a retry backoff
+// doesn't outlive the caller's own context deadline.
+func TestEmbed_429AbortsOnContextCancellation(t *testing.T) {
+	client := newTestClient(t, "/embeddings", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Retry-After", "60")
+		w.WriteHeader(http.StatusTooManyRequests)
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := client.Embed(ctx, "hello")
+	if err == nil {
+		t.Fatal("Embed with a canceled context = nil error, want error")
+	}
+}
+
+// TestEmbed_NonRetryableErrorStatus covers that a non-429 error status is not
+// retried, so a persistent 401 fails fast instead of waiting through backoff.
+func TestEmbed_NonRetryableErrorStatus(t *testing.T) {
+	var calls int
+	client := newTestClient(t, "/embeddings", func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusUnauthorized)
+	})
+
+	_, err := client.Embed(context.Background(), "hello")
+	if err == nil {
+		t.Fatal("Embed with a 401 = nil error, want error")
+	}
+	if calls != 1 {
+		t.Errorf("calls = %d, want 1 (no retry on non-429 status)", calls)
+	}
+}
+
 var _ embedding.Embedder = (*openaicompat.Client)(nil)

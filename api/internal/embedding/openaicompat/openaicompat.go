@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -24,6 +25,17 @@ import (
 // duration, so a fixed timeout is safe here — the same reasoning as the Ollama
 // embedding client.
 const defaultHTTPTimeout = 60 * time.Second
+
+// maxRetries bounds retries of a 429 response. This recovers automatically
+// from a short-lived per-minute rate limit; it does not help when a daily
+// quota is exhausted, since the provider keeps returning 429 regardless — the
+// loop just gives up after maxRetries and surfaces the error as before.
+const maxRetries = 4
+
+// initialRetryDelay is the backoff before the first retry; it doubles on each
+// subsequent attempt. Used only when the provider's response carries no
+// Retry-After header.
+const initialRetryDelay = 1 * time.Second
 
 // Client is an embedding.Embedder backed by an OpenAI-compatible embeddings API.
 type Client struct {
@@ -120,22 +132,50 @@ func (c *Client) EmbedBatch(ctx context.Context, chunks []types.Chunk) ([]types.
 
 // embed sends texts to /embeddings and returns one vector per input, in the
 // same order. It is the single code path shared by Embed and EmbedBatch.
+// A 429 is retried with exponential backoff; every other error (including a
+// 429 that survives maxRetries) returns immediately.
 func (c *Client) embed(ctx context.Context, texts []string) ([][]float32, error) {
 	body, err := json.Marshal(embedRequest{Model: c.model, Input: texts})
 	if err != nil {
 		return nil, fmt.Errorf("marshaling %s embed request: %w", c.provider, err)
 	}
 
+	delay := initialRetryDelay
+	for attempt := 0; ; attempt++ {
+		vectors, retryable, retryAfter, err := c.doEmbed(ctx, body, len(texts))
+		if err == nil {
+			return vectors, nil
+		}
+		if !retryable || attempt >= maxRetries {
+			return nil, err
+		}
+
+		wait := delay
+		if retryAfter >= 0 {
+			wait = retryAfter
+		}
+		if sleepErr := sleepContext(ctx, wait); sleepErr != nil {
+			return nil, sleepErr
+		}
+		delay *= 2
+	}
+}
+
+// doEmbed performs a single request attempt. retryable is true only for a
+// 429 response. retryAfter carries the provider's Retry-After hint in that
+// case, or -1 if the provider sent none (the caller then falls back to its
+// own backoff delay).
+func (c *Client) doEmbed(ctx context.Context, body []byte, wantCount int) (_ [][]float32, retryable bool, retryAfter time.Duration, _ error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/embeddings", bytes.NewReader(body))
 	if err != nil {
-		return nil, fmt.Errorf("building %s embed request: %w", c.provider, err)
+		return nil, false, 0, fmt.Errorf("building %s embed request: %w", c.provider, err)
 	}
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("calling %s embed endpoint: %w", c.provider, err)
+		return nil, false, 0, fmt.Errorf("calling %s embed endpoint: %w", c.provider, err)
 	}
 	defer resp.Body.Close() //nolint:errcheck
 
@@ -146,18 +186,51 @@ func (c *Client) embed(ctx context.Context, texts []string) ([][]float32, error)
 			} `json:"error"`
 		}
 		_ = json.NewDecoder(resp.Body).Decode(&apiErr)
+
+		isRateLimited := resp.StatusCode == http.StatusTooManyRequests
+		wait := parseRetryAfter(resp.Header.Get("Retry-After"))
+
 		if apiErr.Error.Message != "" {
-			return nil, fmt.Errorf("%s embed request failed (status %d): %s", c.provider, resp.StatusCode, apiErr.Error.Message)
+			return nil, isRateLimited, wait, fmt.Errorf("%s embed request failed (status %d): %s", c.provider, resp.StatusCode, apiErr.Error.Message)
 		}
-		return nil, fmt.Errorf("%s embed request failed: unexpected status %d", c.provider, resp.StatusCode)
+		return nil, isRateLimited, wait, fmt.Errorf("%s embed request failed: unexpected status %d", c.provider, resp.StatusCode)
 	}
 
 	var out embedResponse
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return nil, fmt.Errorf("decoding %s embed response: %w", c.provider, err)
+		return nil, false, 0, fmt.Errorf("decoding %s embed response: %w", c.provider, err)
 	}
 
-	return c.toVectors(out, len(texts))
+	vectors, err := c.toVectors(out, wantCount)
+	return vectors, false, 0, err
+}
+
+// parseRetryAfter reads a Retry-After header expressed as a number of
+// seconds (the form providers like Gemini/OpenAI use). It returns -1 for a
+// missing or non-numeric header, signaling the caller should use its own
+// backoff delay instead.
+func parseRetryAfter(header string) time.Duration {
+	if header == "" {
+		return -1
+	}
+	seconds, err := strconv.Atoi(header)
+	if err != nil || seconds < 0 {
+		return -1
+	}
+	return time.Duration(seconds) * time.Second
+}
+
+// sleepContext waits for d, returning early with ctx.Err() if ctx is done
+// first — so a retry backoff never outlives the caller's own timeout.
+func sleepContext(ctx context.Context, d time.Duration) error {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 // toVectors enforces the invariants embedding.Embedder callers depend on — one
