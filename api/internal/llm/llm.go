@@ -27,6 +27,13 @@ type (
 	Usage              = types.Usage
 	StreamChunk        = types.StreamChunk
 	ModelInfo          = types.ModelInfo
+	ModelPurpose       = types.ModelPurpose
+)
+
+const (
+	PurposeAny        = types.PurposeAny        // no filtering — used only to probe a credential
+	PurposeCompletion = types.PurposeCompletion // models usable for chat completions
+	PurposeEmbedding  = types.PurposeEmbedding  // models usable for embeddings
 )
 
 const (
@@ -50,13 +57,15 @@ type Provider interface {
 }
 
 // ModelLister is an optional capability: a Provider that can enumerate the
-// models its credential can reach.
+// models its credential can reach, optionally filtered to those usable for
+// purpose. A provider that cannot filter (most of them — see ModelPurpose)
+// ignores purpose and returns its full list.
 //
 // It is kept separate from Provider so the interface every caller depends on
 // stays limited to what retrieval actually needs. Consumers type-assert for it.
 // All three current implementations satisfy it.
 type ModelLister interface {
-	ListModels(ctx context.Context) ([]ModelInfo, error)
+	ListModels(ctx context.Context, purpose ModelPurpose) ([]ModelInfo, error)
 }
 
 // Credential is what it takes to talk to one provider: which backend, with
