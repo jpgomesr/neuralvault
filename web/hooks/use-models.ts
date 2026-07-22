@@ -8,12 +8,17 @@ import {
   saveCredential,
   setEmbeddingSettings,
   setLLMSettings,
+  type ModelPurpose,
   type Provider,
 } from "@/lib/api/models";
 
 export const providersQueryKey = (workspaceId: string) => ["providers", workspaceId] as const;
-export const modelsQueryKey = (workspaceId: string, provider: Provider) =>
-  ["models", workspaceId, provider] as const;
+// purpose is part of the key, not just an argument: Gemini can be configured
+// as both the completion and the embedding provider at once, and each
+// purpose gets a differently-filtered list — without purpose in the key the
+// two pickers' queries would collide and overwrite each other's cache entry.
+export const modelsQueryKey = (workspaceId: string, provider: Provider, purpose: ModelPurpose) =>
+  ["models", workspaceId, provider, purpose] as const;
 export const modelSettingsQueryKey = (workspaceId: string) => ["model-settings", workspaceId] as const;
 
 /** useProviders lists the provider catalog with this workspace's credential state. */
@@ -32,10 +37,15 @@ export function useProviders(workspaceId: string | null) {
  * without one the request is a guaranteed error, and firing it would surface a
  * failure the user has not caused yet.
  */
-export function useModels(workspaceId: string | null, provider: Provider | null, configured = true) {
+export function useModels(
+  workspaceId: string | null,
+  provider: Provider | null,
+  purpose: ModelPurpose,
+  configured = true,
+) {
   return useQuery({
-    queryKey: modelsQueryKey(workspaceId ?? "", provider ?? "ollama"),
-    queryFn: () => listModels(workspaceId!, provider!),
+    queryKey: modelsQueryKey(workspaceId ?? "", provider ?? "ollama", purpose),
+    queryFn: () => listModels(workspaceId!, provider!, purpose),
     enabled: !!workspaceId && !!provider && configured,
     // Provider model lists change rarely; refetching them on every dropdown
     // open would spend a round-trip (and a rate-limit slot) for nothing.

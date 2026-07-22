@@ -54,8 +54,9 @@ type Service interface {
 	DeleteCredential(ctx context.Context, workspaceID uuid.UUID, provider catalog.Provider) error
 
 	// Models lists the models a workspace's credential can reach, live from the
-	// provider.
-	Models(ctx context.Context, workspaceID uuid.UUID, provider catalog.Provider) ([]llm.ModelInfo, error)
+	// provider, filtered to those usable for purpose when the provider can
+	// report that (see llm.ModelPurpose).
+	Models(ctx context.Context, workspaceID uuid.UUID, provider catalog.Provider, purpose llm.ModelPurpose) ([]llm.ModelInfo, error)
 
 	// Settings returns a workspace's chosen models. Empty fields mean the
 	// workspace is on the server default.
@@ -184,7 +185,7 @@ func (s *ModelConfigService) SaveCredential(ctx context.Context, workspaceID uui
 		baseURL = entry.BaseURL
 	}
 
-	if _, err := s.probeModels(ctx, entry, apiKey, baseURL); err != nil {
+	if _, err := s.probeModels(ctx, entry, apiKey, baseURL, llm.PurposeAny); err != nil {
 		return err
 	}
 
@@ -193,7 +194,9 @@ func (s *ModelConfigService) SaveCredential(ctx context.Context, workspaceID uui
 
 // probeModels lists a provider's models with a candidate credential, so a bad
 // key is rejected before it is stored. It doubles as the model list itself.
-func (s *ModelConfigService) probeModels(ctx context.Context, entry catalog.Entry, apiKey, baseURL string) ([]llm.ModelInfo, error) {
+// SaveCredential calls it with PurposeAny — validating the key does not care
+// which models it can reach.
+func (s *ModelConfigService) probeModels(ctx context.Context, entry catalog.Entry, apiKey, baseURL string, purpose llm.ModelPurpose) ([]llm.ModelInfo, error) {
 	provider, err := llm.New(ctx, llm.Credential{
 		Provider: entry.Provider,
 		APIKey:   apiKey,
@@ -210,7 +213,7 @@ func (s *ModelConfigService) probeModels(ctx context.Context, entry catalog.Entr
 		return nil, fmt.Errorf("%w: provider %q cannot list models", ErrInvalidProvider, entry.Provider)
 	}
 
-	models, err := lister.ListModels(ctx)
+	models, err := lister.ListModels(ctx, purpose)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %s", ErrProviderUnavailable, err)
 	}
@@ -224,7 +227,7 @@ func (s *ModelConfigService) DeleteCredential(ctx context.Context, workspaceID u
 }
 
 // Models lists the models a workspace can reach on a provider, live.
-func (s *ModelConfigService) Models(ctx context.Context, workspaceID uuid.UUID, provider catalog.Provider) ([]llm.ModelInfo, error) {
+func (s *ModelConfigService) Models(ctx context.Context, workspaceID uuid.UUID, provider catalog.Provider, purpose llm.ModelPurpose) ([]llm.ModelInfo, error) {
 	entry, ok := catalog.Lookup(provider)
 	if !ok {
 		return nil, fmt.Errorf("%w: unknown provider %q", ErrInvalidProvider, provider)
@@ -235,7 +238,7 @@ func (s *ModelConfigService) Models(ctx context.Context, workspaceID uuid.UUID, 
 		return nil, err
 	}
 
-	return s.probeModels(ctx, entry, apiKey, baseURL)
+	return s.probeModels(ctx, entry, apiKey, baseURL, purpose)
 }
 
 // Settings returns a workspace's chosen models.

@@ -13,6 +13,7 @@ import (
 	"github.com/jpgomesr/neuralvault/api/internal/catalog"
 	"github.com/jpgomesr/neuralvault/api/internal/config"
 	"github.com/jpgomesr/neuralvault/api/internal/crypto"
+	"github.com/jpgomesr/neuralvault/api/internal/llm"
 	"github.com/jpgomesr/neuralvault/api/internal/vectorstorage"
 )
 
@@ -140,7 +141,7 @@ func TestModels_ListsLiveFromProvider(t *testing.T) {
 		t.Fatalf("SaveCredential: %v", err)
 	}
 
-	models, err := s.Models(ctx, wsID, catalog.OpenAI)
+	models, err := s.Models(ctx, wsID, catalog.OpenAI, llm.PurposeAny)
 	if err != nil {
 		t.Fatalf("Models: %v", err)
 	}

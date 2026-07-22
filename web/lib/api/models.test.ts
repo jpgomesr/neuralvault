@@ -44,16 +44,18 @@ describe("listProviders", () => {
 });
 
 describe("listModels", () => {
-  it("returns the live model list for a provider", async () => {
+  it("returns the live model list for a provider, filtered by purpose", async () => {
     const models = [{ id: "claude-sonnet-5", name: "Claude Sonnet 5" }];
     fetchMock.mockResolvedValueOnce(jsonResponse(models));
-    await expect(listModels("w1", "anthropic")).resolves.toEqual(models);
-    expect(fetchMock).toHaveBeenCalledWith("/api/workspaces/w1/providers/anthropic/models");
+    await expect(listModels("w1", "anthropic", "completion")).resolves.toEqual(models);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/workspaces/w1/providers/anthropic/models?purpose=completion",
+    );
   });
 
   it("surfaces a missing-credential error so the picker can explain why", async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse('provider credential not found: no api key saved for provider "anthropic"', { ok: false, status: 400 }));
-    await expect(listModels("w1", "anthropic")).rejects.toThrow("no api key saved for provider");
+    await expect(listModels("w1", "anthropic", "embedding")).rejects.toThrow("no api key saved for provider");
   });
 });
 

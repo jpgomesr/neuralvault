@@ -44,6 +44,8 @@ type fakeService struct {
 
 	embeddingChange EmbeddingChange
 	setEmbeddingErr error
+
+	gotPurpose llm.ModelPurpose
 }
 
 func (f *fakeService) Providers(context.Context, uuid.UUID) ([]ProviderStatus, error) {
@@ -59,7 +61,8 @@ func (f *fakeService) DeleteCredential(context.Context, uuid.UUID, catalog.Provi
 	return f.deleteCredentialErr
 }
 
-func (f *fakeService) Models(context.Context, uuid.UUID, catalog.Provider) ([]llm.ModelInfo, error) {
+func (f *fakeService) Models(_ context.Context, _ uuid.UUID, _ catalog.Provider, purpose llm.ModelPurpose) ([]llm.ModelInfo, error) {
+	f.gotPurpose = purpose
 	return f.models, f.modelsErr
 }
 
@@ -355,6 +358,57 @@ func TestListModels_CredentialConfigError(t *testing.T) {
 				t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
 			}
 		})
+	}
+}
+
+// requestWithQuery builds a GET request the same way newRequest does, but
+// with a query string — needed to exercise ?purpose=, which newRequest's
+// fixed "/" URL cannot carry.
+func requestWithQuery(query string, params map[string]string) *http.Request {
+	r := httptest.NewRequest(http.MethodGet, "/?"+query, nil)
+	rctx := chi.NewRouteContext()
+	for k, v := range params {
+		rctx.URLParams.Add(k, v)
+	}
+	return r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, rctx))
+}
+
+func TestListModels_Purpose(t *testing.T) {
+	tests := []struct {
+		name  string
+		query string
+		want  llm.ModelPurpose
+	}{
+		{name: "no purpose defaults to any", query: "", want: llm.PurposeAny},
+		{name: "completion", query: "purpose=completion", want: llm.PurposeCompletion},
+		{name: "embedding", query: "purpose=embedding", want: llm.PurposeEmbedding},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fake := &fakeService{}
+			h := NewHandler(fake, allowMembers(), &fakeReindexer{})
+
+			w := httptest.NewRecorder()
+			h.ListModels(w, requestWithQuery(tt.query, wsProviderParams(uuid.New(), catalog.Gemini)))
+
+			if w.Code != http.StatusOK {
+				t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+			}
+			if fake.gotPurpose != tt.want {
+				t.Fatalf("expected service to receive purpose %q, got %q", tt.want, fake.gotPurpose)
+			}
+		})
+	}
+}
+
+func TestListModels_InvalidPurpose(t *testing.T) {
+	h := NewHandler(&fakeService{}, allowMembers(), &fakeReindexer{})
+
+	w := httptest.NewRecorder()
+	h.ListModels(w, requestWithQuery("purpose=bogus", wsProviderParams(uuid.New(), catalog.Gemini)))
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
 	}
 }
 

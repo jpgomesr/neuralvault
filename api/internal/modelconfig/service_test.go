@@ -9,6 +9,7 @@ import (
 
 	"github.com/jpgomesr/neuralvault/api/internal/catalog"
 	"github.com/jpgomesr/neuralvault/api/internal/config"
+	"github.com/jpgomesr/neuralvault/api/internal/llm"
 )
 
 // newValidationOnlyService builds a service backed by nil dependencies. It is
@@ -95,7 +96,7 @@ func TestSetEmbedding_ValidationErrors(t *testing.T) {
 
 func TestModels_UnknownProvider(t *testing.T) {
 	s := newValidationOnlyService()
-	_, err := s.Models(context.Background(), uuid.New(), catalog.Provider("does-not-exist"))
+	_, err := s.Models(context.Background(), uuid.New(), catalog.Provider("does-not-exist"), llm.PurposeAny)
 	if !errors.Is(err, ErrInvalidProvider) {
 		t.Fatalf("err = %v, want ErrInvalidProvider", err)
 	}

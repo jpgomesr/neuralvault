@@ -12,6 +12,7 @@ import (
 
 	"github.com/jpgomesr/neuralvault/api/internal/catalog"
 	"github.com/jpgomesr/neuralvault/api/internal/httperr"
+	"github.com/jpgomesr/neuralvault/api/internal/llm"
 	"github.com/jpgomesr/neuralvault/api/internal/logger"
 	"github.com/jpgomesr/neuralvault/api/internal/workspaces"
 )
@@ -58,6 +59,19 @@ func (h *Handler) workspaceID(w http.ResponseWriter, r *http.Request) (uuid.UUID
 // provider parses the {provider} path parameter.
 func provider(r *http.Request) catalog.Provider {
 	return catalog.Provider(chi.URLParam(r, "provider"))
+}
+
+// purpose parses the optional ?purpose= query parameter used to filter a
+// model list. It reports whether the request may proceed; on failure the
+// response has already been written.
+func purpose(w http.ResponseWriter, r *http.Request) (llm.ModelPurpose, bool) {
+	switch p := llm.ModelPurpose(r.URL.Query().Get("purpose")); p {
+	case llm.PurposeAny, llm.PurposeCompletion, llm.PurposeEmbedding:
+		return p, true
+	default:
+		http.Error(w, "invalid purpose", http.StatusBadRequest)
+		return "", false
+	}
 }
 
 // writeServiceError maps a service error to a status code.
@@ -197,11 +211,12 @@ func (h *Handler) DeleteCredential(w http.ResponseWriter, r *http.Request) {
 // ListModels godoc
 //
 // @Summary List a provider's models
-// @Description Lists the models the workspace's API key can reach, fetched live from the provider rather than from a hardcoded list.
+// @Description Lists the models the workspace's API key can reach, fetched live from the provider rather than from a hardcoded list. If purpose is set and the provider can self-report per-model capability, the list is filtered to models usable for that purpose (e.g. excluding chat-only models from an embedding picker); otherwise purpose is ignored and the full list is returned.
 // @Tags modelconfig
 // @Produce json
 // @Param workspace_id path string true "Workspace ID"
 // @Param provider path string true "Provider ID"
+// @Param purpose query string false "Filter to models usable for this purpose" Enums(completion, embedding)
 // @Success 200 {array} types.ModelInfo
 // @Failure 400
 // @Failure 401
@@ -216,7 +231,12 @@ func (h *Handler) ListModels(w http.ResponseWriter, r *http.Request) {
 	}
 
 	p := provider(r)
-	models, err := h.service.Models(r.Context(), workspaceID, p)
+	purp, ok := purpose(w, r)
+	if !ok {
+		return
+	}
+
+	models, err := h.service.Models(r.Context(), workspaceID, p, purp)
 	if err != nil {
 		writeServiceError(w, r, "list provider models failed", err, "workspace_id", workspaceID, "provider", p)
 		return

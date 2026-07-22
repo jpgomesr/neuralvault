@@ -25,6 +25,13 @@ export interface ModelInfo {
   name: string;
 }
 
+/**
+ * ModelPurpose filters a model list to what the caller intends to use it for.
+ * Most providers cannot self-report this per model and ignore it; Gemini is
+ * the current exception (see internal/llm/openaicompat on the API side).
+ */
+export type ModelPurpose = "completion" | "embedding";
+
 /** ModelSettings is a workspace's chosen models. Empty fields mean the server default. */
 export interface ModelSettings {
   llm_provider?: Provider;
@@ -58,8 +65,14 @@ export async function listProviders(workspaceId: string): Promise<ProviderStatus
   return res.json();
 }
 
-export async function listModels(workspaceId: string, provider: Provider): Promise<ModelInfo[]> {
-  const res = await fetch(`/api/workspaces/${workspaceId}/providers/${provider}/models`);
+export async function listModels(
+  workspaceId: string,
+  provider: Provider,
+  purpose: ModelPurpose,
+): Promise<ModelInfo[]> {
+  const res = await fetch(
+    `/api/workspaces/${workspaceId}/providers/${provider}/models?purpose=${purpose}`,
+  );
   if (!res.ok) throw await apiError(res, "list models");
   return res.json();
 }

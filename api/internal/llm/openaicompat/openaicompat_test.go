@@ -219,7 +219,7 @@ func TestListModels(t *testing.T) {
 		})
 	})
 
-	models, err := client.ListModels(context.Background())
+	models, err := client.ListModels(context.Background(), llm.PurposeAny)
 	if err != nil {
 		t.Fatalf("ListModels: %v", err)
 	}
@@ -232,6 +232,105 @@ func TestListModels(t *testing.T) {
 		if models[i].ID != id {
 			t.Errorf("models[%d].ID = %q, want %q", i, models[i].ID, id)
 		}
+	}
+}
+
+// TestListModels_NonGeminiIgnoresPurpose verifies purpose has no effect for a
+// provider that cannot self-report per-model capability: the full raw list
+// still comes back, exactly like PurposeAny.
+func TestListModels_NonGeminiIgnoresPurpose(t *testing.T) {
+	client := newTestClient(t, "/models", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": []map[string]string{{"id": "llama-3.3-70b"}},
+		})
+	})
+
+	models, err := client.ListModels(context.Background(), llm.PurposeEmbedding)
+	if err != nil {
+		t.Fatalf("ListModels: %v", err)
+	}
+	if len(models) != 1 || models[0].ID != "llama-3.3-70b" {
+		t.Fatalf("expected purpose to be ignored, got %+v", models)
+	}
+}
+
+// newGeminiTestClient serves handler at Gemini's native models.list path.
+// baseURL is set to srv.URL+"/openai", mirroring catalog.Gemini's real
+// BaseURL, so geminiNativeModelsURL's "/openai" -> "" derivation is exercised
+// exactly as it runs against the real API.
+func newGeminiTestClient(t *testing.T, handler http.HandlerFunc) *openaicompat.Client {
+	t.Helper()
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/models", handler)
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	return openaicompat.New("gemini", srv.URL+"/openai", "test-key", "gemini-2.5-flash")
+}
+
+// TestListModels_GeminiPurposeFiltering verifies a purpose-filtered Gemini
+// listing routes to the native API and keeps only models whose
+// supportedGenerationMethods cover the requested purpose — the fix for a
+// chat-only model like gemini-2.5-flash appearing selectable in the embedding
+// picker and then failing on the first embed call.
+func TestListModels_GeminiPurposeFiltering(t *testing.T) {
+	client := newGeminiTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Query().Get("key"); got != "test-key" {
+			t.Errorf("key query param = %q, want test-key", got)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"models": []map[string]any{
+				{"name": "models/gemini-2.5-flash", "supportedGenerationMethods": []string{"generateContent"}},
+				{"name": "models/text-embedding-004", "supportedGenerationMethods": []string{"embedContent"}},
+				{"name": "models/gemini-embedding-001", "supportedGenerationMethods": []string{"embedContent", "countTokens"}},
+			},
+		})
+	})
+
+	models, err := client.ListModels(context.Background(), llm.PurposeEmbedding)
+	if err != nil {
+		t.Fatalf("ListModels: %v", err)
+	}
+
+	want := []string{"text-embedding-004", "gemini-embedding-001"}
+	if len(models) != len(want) {
+		t.Fatalf("got %d models, want %d: %+v", len(models), len(want), models)
+	}
+	for i, id := range want {
+		if models[i].ID != id {
+			t.Errorf("models[%d].ID = %q, want %q", i, models[i].ID, id)
+		}
+	}
+}
+
+// TestListModels_GeminiPurposeAny_SkipsNativeAPI verifies the unfiltered
+// PurposeAny path still uses the ordinary OpenAI-compatible /models endpoint
+// (Bearer auth, "data" envelope) rather than the native one — the native
+// route only kicks in when a purpose is actually being filtered on.
+func TestListModels_GeminiPurposeAny_SkipsNativeAPI(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/openai/models", func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer test-key" {
+			t.Errorf("Authorization = %q, want Bearer test-key", got)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": []map[string]string{{"id": "models/gemini-2.5-flash"}},
+		})
+	})
+	mux.HandleFunc("/models", func(w http.ResponseWriter, _ *http.Request) {
+		t.Error("PurposeAny hit the native models endpoint; it should only use the OpenAI-compatible one")
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	client := openaicompat.New("gemini", srv.URL+"/openai", "test-key", "gemini-2.5-flash")
+
+	models, err := client.ListModels(context.Background(), llm.PurposeAny)
+	if err != nil {
+		t.Fatalf("ListModels: %v", err)
+	}
+	if len(models) != 1 || models[0].ID != "gemini-2.5-flash" {
+		t.Fatalf("unexpected models: %+v", models)
 	}
 }
 
@@ -521,7 +620,7 @@ func TestStream_TruncatedBody(t *testing.T) {
 func TestListModels_InvalidBaseURL(t *testing.T) {
 	client := openaicompat.New("groq", "://bad-url", "test-key", "llama-3.3-70b")
 
-	_, err := client.ListModels(context.Background())
+	_, err := client.ListModels(context.Background(), llm.PurposeAny)
 	if err == nil {
 		t.Fatal("ListModels with an invalid base URL = nil error, want an error")
 	}
@@ -532,7 +631,7 @@ func TestListModels_ConnectionRefused(t *testing.T) {
 	client := openaicompat.New("groq", srv.URL, "test-key", "llama-3.3-70b")
 	srv.Close()
 
-	_, err := client.ListModels(context.Background())
+	_, err := client.ListModels(context.Background(), llm.PurposeAny)
 	if err == nil {
 		t.Fatal("ListModels against a closed server = nil error, want a connection error")
 	}
@@ -546,7 +645,7 @@ func TestListModels_ErrorStatus(t *testing.T) {
 		})
 	})
 
-	_, err := client.ListModels(context.Background())
+	_, err := client.ListModels(context.Background(), llm.PurposeAny)
 	if err == nil {
 		t.Fatal("ListModels with bad key = nil error, want error")
 	}
@@ -561,7 +660,7 @@ func TestListModels_MalformedResponseBody(t *testing.T) {
 		_, _ = fmt.Fprint(w, "not json")
 	})
 
-	_, err := client.ListModels(context.Background())
+	_, err := client.ListModels(context.Background(), llm.PurposeAny)
 	if err == nil {
 		t.Fatal("ListModels = nil error, want a decode error")
 	}
