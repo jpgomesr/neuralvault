@@ -81,7 +81,14 @@ type tagsResponse struct {
 // ensureModelAvailable confirms the configured embedding model has already
 // been pulled on the Ollama server, matching either the bare model name or
 // its default ":latest"-suffixed tag.
+//
+// An empty model is treated as trivially available — see the identical
+// comment on llm/ollama's ensureModelAvailable for why.
 func (c *Client) ensureModelAvailable(ctx context.Context) error {
+	if c.model == "" {
+		return nil
+	}
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/api/tags", nil)
 	if err != nil {
 		return fmt.Errorf("building ollama tags request: %w", err)

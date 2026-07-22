@@ -105,7 +105,17 @@ func (c *Client) fetchTags(ctx context.Context) (tagsResponse, error) {
 // ensureModelAvailable confirms the configured completion model has already
 // been pulled on the Ollama server, matching either the bare model name or
 // its default ":latest"-suffixed tag.
+//
+// An empty model is treated as trivially available: modelconfig.Models lists
+// a provider's models to let a workspace discover what to pick, calling this
+// constructor with no model chosen yet. Requiring one already pulled would
+// make that discovery impossible — there is nothing to validate until a
+// model is actually selected for use.
 func (c *Client) ensureModelAvailable(ctx context.Context) error {
+	if c.defaultModel == "" {
+		return nil
+	}
+
 	tags, err := c.fetchTags(ctx)
 	if err != nil {
 		return err
