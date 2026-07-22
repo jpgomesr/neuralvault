@@ -3,11 +3,13 @@ package openaicompat_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jpgomesr/neuralvault/api/internal/embedding"
 	"github.com/jpgomesr/neuralvault/api/internal/embedding/openaicompat"
@@ -289,19 +291,51 @@ func TestEmbed_GivesUpAfterMaxRetries(t *testing.T) {
 }
 
 // TestEmbed_429AbortsOnContextCancellation covers that a retry backoff
-// doesn't outlive the caller's own context deadline.
+// doesn't outlive the caller's own context deadline: the first response is a
+// retryable 429 with a long Retry-After, but the context expires while the
+// client is still waiting out that backoff.
 func TestEmbed_429AbortsOnContextCancellation(t *testing.T) {
 	client := newTestClient(t, "/embeddings", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Retry-After", "60")
 		w.WriteHeader(http.StatusTooManyRequests)
 	})
 
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
 
 	_, err := client.Embed(ctx, "hello")
-	if err == nil {
-		t.Fatal("Embed with a canceled context = nil error, want error")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v, want context.DeadlineExceeded", err)
+	}
+}
+
+// TestEmbed_NegativeRetryAfterFallsBackToDefaultBackoff covers that a
+// negative Retry-After value (invalid per spec, but not impossible from a
+// misbehaving provider) is treated the same as a missing header, rather than
+// producing a negative or zero wait.
+func TestEmbed_NegativeRetryAfterFallsBackToDefaultBackoff(t *testing.T) {
+	var calls int
+	client := newTestClient(t, "/embeddings", func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		if calls < 2 {
+			w.Header().Set("Retry-After", "-5")
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": []map[string]any{{"index": 0, "embedding": []float32{0.1}}},
+		})
+	})
+
+	vector, err := client.Embed(context.Background(), "hello")
+	if err != nil {
+		t.Fatalf("Embed: %v", err)
+	}
+	if len(vector) != 1 {
+		t.Fatalf("len(vector) = %d, want 1", len(vector))
+	}
+	if calls != 2 {
+		t.Errorf("calls = %d, want 2", calls)
 	}
 }
 
