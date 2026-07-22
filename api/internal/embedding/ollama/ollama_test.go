@@ -527,3 +527,17 @@ func TestNew_TagsMalformedJSON(t *testing.T) {
 		t.Fatalf("expected decode error, got: %v", err)
 	}
 }
+
+// TestNewWithModel_EmptyModelSkipsAvailabilityCheck mirrors the same case on
+// llm/ollama: a caller discovering which models exist has none chosen yet, so
+// construction must not require one already pulled.
+func TestNewWithModel_EmptyModelSkipsAvailabilityCheck(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/tags", validTagsHandler)
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	if _, err := ollama.NewWithModel(context.Background(), srv.URL, ""); err != nil {
+		t.Fatalf("NewWithModel with empty model: %v", err)
+	}
+}

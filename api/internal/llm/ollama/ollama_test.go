@@ -497,3 +497,27 @@ func TestNew_TagsMalformedJSON(t *testing.T) {
 		t.Fatalf("expected decode error, got: %v", err)
 	}
 }
+
+// TestNewWithModel_EmptyModelSkipsAvailabilityCheck covers modelconfig's model
+// discovery path: it constructs a Client with no model chosen yet (see
+// probeModels) purely to call ListModels. Requiring a model already pulled at
+// that point would make discovering which ones exist impossible.
+func TestNewWithModel_EmptyModelSkipsAvailabilityCheck(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/tags", validTagsHandler)
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	client, err := ollama.NewWithModel(context.Background(), srv.URL, "")
+	if err != nil {
+		t.Fatalf("NewWithModel with empty model: %v", err)
+	}
+
+	models, err := client.ListModels(context.Background())
+	if err != nil {
+		t.Fatalf("ListModels: %v", err)
+	}
+	if len(models) != 1 || models[0].ID != "llama3:latest" {
+		t.Errorf("unexpected models: %+v", models)
+	}
+}
